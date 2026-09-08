@@ -62,33 +62,14 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
-  commits:
-    name: Commit messages
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    timeout-minutes: 5
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: backend/.nvmrc
-
-      - name: Install commitlint
-        run: pnpm add --global @commitlint/cli@19 @commitlint/config-conventional@19
-
-      # Steps in this workflow run from backend/, so the config path is
-      # relative to that directory and not to the repository root.
+      # commitlint runs here rather than in its own job so it uses the
+      # versions pinned in the lockfile. Installing it globally would be a
+      # resolving install, and a global @commitlint/config-conventional is
+      # not resolvable from the directory holding the config that extends it.
       - name: Check commit messages
+        if: github.event_name == 'pull_request'
         run: >
-          commitlint
+          pnpm exec commitlint
           --config commitlint.config.cjs
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
