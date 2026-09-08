@@ -4,13 +4,20 @@ import { HealthController } from './health.controller';
 
 describe('HealthController', () => {
   let controller: HealthController;
+  let module: TestingModule;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       controllers: [HealthController],
     }).compile();
 
     controller = module.get<HealthController>(HealthController);
+  });
+
+  // Without this the Nest application context stays open and Jest reports a
+  // worker that failed to exit gracefully, which turns into flaky CI later.
+  afterEach(async () => {
+    await module.close();
   });
 
   it('reports the process as live', () => {

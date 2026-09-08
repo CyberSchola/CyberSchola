@@ -1,10 +1,14 @@
 import 'reflect-metadata';
 
-import { Logger } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { NestFactory, Reflector } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { setupSwagger } from './common/swagger/setup-swagger';
+import { NodeEnv } from './config/env.validation';
 
 /**
  * HTTP entry point.
@@ -21,14 +25,39 @@ async function bootstrap(): Promise<void> {
   // nothing back.
   app.getHttpAdapter().getInstance().disable('x-powered-by');
 
+  const isProduction = process.env.NODE_ENV === NodeEnv.Production;
   const prefix = process.env.API_PREFIX ?? 'api/v1';
+
   app.setGlobalPrefix(prefix);
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      // Strip anything the DTO does not declare, and reject rather than ignore
+      // when a caller sends it. Blueprint rule 24: nothing security-relevant is
+      // ever read from an unvalidated field, and silently dropping an unknown
+      // field hides the fact that a client is sending one.
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: false },
+    }),
+  );
+
+  app.useGlobalInterceptors(new ResponseInterceptor(app.get(Reflector)));
+  app.useGlobalFilters(new AllExceptionsFilter());
+
   app.enableShutdownHooks();
+
+  const docsPath = setupSwagger(app, { isProduction });
 
   const port = Number.parseInt(process.env.PORT ?? '3000', 10);
   await app.listen(port);
 
   Logger.log(`CyberSchola API listening on port ${port} under /${prefix}`, 'Bootstrap');
+  Logger.log(
+    docsPath ? `API documentation at /${docsPath}` : 'API documentation disabled in production',
+    'Bootstrap',
+  );
 }
 
 void bootstrap();
