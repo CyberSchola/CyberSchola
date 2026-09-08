@@ -86,13 +86,17 @@ jobs:
     # and check constraints are enforced by the database, so a suite built on a
     # mocked repository passes whether or not any of them exist.
     #
+    # Pinned to 17 to match the live Supabase project (verified at 17.6). Testing
+    # against a different major version than production would leave exactly the
+    # gap this job exists to close.
+    #
     # Testcontainers would also provide this. It was rejected on cost: 185
     # packages, 13 advisories including 3 high, and a native module that this
     # project's build-script policy blocks. A service container gives the same
     # guarantee for nothing.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: cyberschola
           POSTGRES_PASSWORD: cyberschola_ci_only

@@ -8,12 +8,14 @@
 #   pnpm migration:run
 #   pnpm test:integration
 #
-# The image is pinned to the major version Supabase runs, so a migration that
-# passes here is a migration that will apply there.
+# The image is pinned to the major version Supabase runs, verified against the
+# live project on 2026-09-08 (PostgreSQL 17.6), so a migration that passes here
+# is a migration that will apply there. If Supabase upgrades, bump this and the
+# CI service together or the claim stops being true.
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: cyberschola-postgres
     restart: unless-stopped
     environment:
@@ -34,7 +36,7 @@ services:
       retries: 10
 
   postgres-test:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: cyberschola-postgres-test
     restart: unless-stopped
     environment:
