@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { config as loadEnv } from 'dotenv';
 import { DataSource } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions';
@@ -20,17 +23,62 @@ function env(name: string): string | undefined {
   return value === undefined || value.trim() === '' ? undefined : value;
 }
 
+/** Supabase's root CA, checked into the repository. See sslOptions(). */
+const DEFAULT_CA_PATH = join(__dirname, '..', '..', 'certs', 'supabase-prod-ca-2021.crt');
+
 /**
- * Whether to require TLS, and whether to verify the certificate.
+ * Whether to require TLS, and what to verify the certificate against.
  *
- * `rejectUnauthorized` stays true against Supabase. Turning it off is the
- * common shortcut and it silently accepts any certificate, which means the
- * connection is encrypted against a passive observer and useless against
- * anyone able to sit in the middle of it. Local Postgres runs without TLS at
- * all, which is honest rather than pretend-secure.
+ * `rejectUnauthorized` stays true. Turning it off is the shortcut every search
+ * result suggests, and it accepts any certificate at all: encrypted against a
+ * passive observer, useless against anyone able to sit in the middle.
+ *
+ * Keeping it true needs one extra thing against Supabase, which was not
+ * obvious and is worth writing down. Supabase does not use a publicly trusted
+ * certificate. The pooler presents:
+ *
+ *     *.pooler.supabase.com
+ *       issued by  Supabase Intermediate 2021 CA
+ *       issued by  Supabase Root 2021 CA   (self-signed)
+ *
+ * That root is in no public trust store, so Node rejects the chain with
+ * SELF_SIGNED_CERT_IN_CHAIN however correct the connection is. Supplying the
+ * root explicitly is what makes verification both possible and meaningful:
+ * the connection is now pinned to Supabase's own CA, which is a stronger
+ * guarantee than trusting the ~150 public roots Node ships with, since any one
+ * of those could otherwise issue a certificate for this host.
+ *
+ * The certificate is public, contains no secret, and is committed so that a
+ * fresh clone can connect without a separate download step. DATABASE_CA_CERT
+ * overrides the path if Supabase rotates the root before 2031.
  */
 function sslOptions(): PostgresConnectionOptions['ssl'] {
-  return env('DATABASE_SSL') === 'true' ? { rejectUnauthorized: true } : false;
+  if (env('DATABASE_SSL') !== 'true') {
+    // Local Postgres runs without TLS at all, which is honest rather than
+    // pretend-secure.
+    return false;
+  }
+
+  const caPath = env('DATABASE_CA_CERT') ?? DEFAULT_CA_PATH;
+
+  if (!existsSync(caPath)) {
+    throw new Error(
+      [
+        `TLS is enabled but the CA certificate was not found at: ${caPath}`,
+        '',
+        'Supabase uses its own root CA rather than a publicly trusted one, so',
+        'the certificate has to be supplied for verification to succeed. Do not',
+        'work around this by disabling rejectUnauthorized: that accepts any',
+        'certificate and defeats the point of TLS.',
+        '',
+        'Fetch it with:',
+        '  curl -fsSL https://supabase-downloads.s3.amazonaws.com/prod/ssl/prod-ca-2021.crt \\',
+        '    -o backend/certs/supabase-prod-ca-2021.crt',
+      ].join('\n'),
+    );
+  }
+
+  return { rejectUnauthorized: true, ca: readFileSync(caPath, 'utf8') };
 }
 
 /** Environments where a single local Postgres serves both roles. */
