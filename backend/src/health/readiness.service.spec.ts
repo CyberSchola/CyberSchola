@@ -113,6 +113,73 @@ describe('ReadinessService', () => {
     await expect(service.check()).resolves.toMatchObject({ ready: false });
   }, 10_000);
 
+  describe('concurrent probes', () => {
+    it('shares one database query between overlapping callers', async () => {
+      // The query cannot be cancelled once started, so the only way to bound
+      // connection use is to stop starting new ones. An orchestrator polling
+      // a hung database would otherwise tie up a pool connection per probe.
+      let resolveQuery: (rows: unknown[]) => void = () => {};
+      const query = jest.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveQuery = resolve;
+          }),
+      );
+      const service = new ReadinessService(makeDataSource({ query }));
+
+      const probes = [service.check(), service.check(), service.check()];
+      resolveQuery([{ ok: 1 }]);
+      const results = await Promise.all(probes);
+
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(results.every((r) => r.ready)).toBe(true);
+    });
+
+    it('starts a fresh query once the previous one has settled', async () => {
+      const query = jest.fn().mockResolvedValue([{ ok: 1 }]);
+      const service = new ReadinessService(makeDataSource({ query }));
+
+      await service.check();
+      await service.check();
+
+      // Deduplication must not become caching. A probe answered from a stale
+      // result would keep reporting ready after the database had gone.
+      expect(query).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears the in-flight probe after a failure, so it can recover', async () => {
+      const query = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('down'))
+        .mockResolvedValueOnce([{ ok: 1 }]);
+      const service = new ReadinessService(makeDataSource({ query }));
+
+      await expect(service.check()).resolves.toMatchObject({ ready: false });
+      await expect(service.check()).resolves.toMatchObject({ ready: true });
+    });
+
+    it('recovers after a timed-out probe rather than wedging permanently', async () => {
+      // If the in-flight promise were never cleared on timeout, readiness
+      // would report down forever even once the database came back.
+      let settle: (rows: unknown[]) => void = () => {};
+      const query = jest
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              settle = resolve;
+            }),
+        )
+        .mockResolvedValue([{ ok: 1 }]);
+      const service = new ReadinessService(makeDataSource({ query }));
+
+      await expect(service.check()).resolves.toMatchObject({ ready: false });
+      settle([]);
+
+      await expect(service.check()).resolves.toMatchObject({ ready: true });
+    }, 15_000);
+  });
+
   it('resolves rather than throwing, whatever the database does', async () => {
     for (const rejection of [new Error('x'), 'a string', null, undefined]) {
       const service = new ReadinessService(

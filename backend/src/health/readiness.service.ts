@@ -18,9 +18,37 @@ const PROBE_TIMEOUT_MS = 2_000;
 export class ReadinessService {
   private readonly logger = new Logger(ReadinessService.name);
 
+  /**
+   * The probe currently in flight, if any.
+   *
+   * `Promise.race` bounds how long a caller waits; it does not cancel the
+   * query underneath. node-postgres offers no way to abort an in-flight query
+   * on a pooled connection, so the connection stays checked out until Postgres
+   * itself gives up at `statement_timeout` (30s, set on the pool).
+   *
+   * That matters because an orchestrator polls readiness on a schedule. With a
+   * hung database and a 5s probe interval, starting a fresh query every time
+   * would leave roughly six abandoned queries alive at once against a pool of
+   * ten, and the pool would be the next thing to fail.
+   *
+   * Since the query cannot be cancelled, the fix is to stop adding more. While
+   * a probe is outstanding every caller receives that same probe, so at most
+   * one connection is ever tied up regardless of how often the endpoint is
+   * called.
+   */
+  private inFlight?: Promise<ReadinessReport>;
+
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async check(): Promise<ReadinessReport> {
+    this.inFlight ??= this.runCheck().finally(() => {
+      this.inFlight = undefined;
+    });
+
+    return this.inFlight;
+  }
+
+  private async runCheck(): Promise<ReadinessReport> {
     const database = await this.checkDatabase();
 
     return {

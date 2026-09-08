@@ -26,13 +26,26 @@ export class EnableRequiredExtensions1757290000000 implements MigrationInterface
     await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS "citext"`);
   }
 
+  /**
+   * Deliberately empty. Extension migrations are effectively forward-only.
+   *
+   * Reverting this migration removes its row from the `migrations` table and
+   * nothing else. `pgcrypto` and `citext` stay installed.
+   *
+   * That is the intended behaviour, for two reasons. Dropping an extension
+   * would break every column still using its types, including columns created
+   * by migrations that have not been reverted. And on Supabase an extension
+   * may have been enabled by the platform or by another part of the project
+   * rather than by us, so dropping it would reach outside our own schema and
+   * affect things we do not own.
+   *
+   * The practical consequence for anyone reading this later: after a revert,
+   * `migration:show` will report this migration as pending, and re-running it
+   * is a no-op because every statement in `up()` is `IF NOT EXISTS`. The
+   * database is in the same state either way. Do not treat a green revert as
+   * evidence that the extensions were removed.
+   */
   public async down(): Promise<void> {
-    // Deliberately empty.
-    //
-    // Dropping an extension would break every column still using its types,
-    // and on Supabase these may have been enabled by the platform or by
-    // another part of the project rather than by this migration. Reverting
-    // this migration should undo what it added to *our* schema, which is
-    // nothing, and must not reach outside that.
+    return Promise.resolve();
   }
 }
