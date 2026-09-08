@@ -1,14 +1,13 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { validateEnv } from './config/env.validation';
 import { HealthController } from './health/health.controller';
 
 /**
  * Root module.
  *
- * Kept deliberately thin. Configuration validation, the response envelope,
- * the exception filter and Swagger arrive in BE-F02; the database, Redis and
- * queue modules arrive in BE-F03.
+ * The database, Redis and queue modules arrive in BE-F03.
  */
 @Module({
   imports: [
@@ -16,6 +15,9 @@ import { HealthController } from './health/health.controller';
       isGlobal: true,
       cache: true,
       envFilePath: ['.env'],
+      // Boots or refuses to boot. A bad value should never survive to the
+      // first request.
+      validate: validateEnv,
     }),
   ],
   controllers: [HealthController],
