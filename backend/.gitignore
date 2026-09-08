@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test output
+coverage/
+.jest-cache/
+
+# Environment. Only .env.example is ever committed.
+.env
+.env.*
+!.env.example
+
+# Editor and OS
+.idea/
+.DS_Store
+*.swp
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
