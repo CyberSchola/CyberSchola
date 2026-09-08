@@ -2,12 +2,13 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
 import { validateEnv } from './config/env.validation';
-import { HealthController } from './health/health.controller';
+import { DatabaseModule } from './database/database.module';
+import { HealthModule } from './health/health.module';
 
 /**
  * Root module.
  *
- * The database, Redis and queue modules arrive in BE-F03.
+ * Redis, the cache wrapper and the queue worker arrive in BE-F04.
  */
 @Module({
   imports: [
@@ -19,7 +20,8 @@ import { HealthController } from './health/health.controller';
       // first request.
       validate: validateEnv,
     }),
+    DatabaseModule,
+    HealthModule,
   ],
-  controllers: [HealthController],
 })
 export class AppModule {}
