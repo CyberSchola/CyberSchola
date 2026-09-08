@@ -166,20 +166,29 @@ main
 
 ## 8. Database Changes
 
-Any change involving Prisma or the database must be reviewed carefully.
+Any change involving the database must be reviewed carefully.
+
+CyberSchola has two applications with different data layers, and both are covered by this section:
+
+- the web application uses **Prisma**
+- the backend service under `backend/` uses **TypeORM** with SQL migrations
 
 Examples include:
 
 - Prisma schema changes
+- TypeORM entity changes
 - New migrations
 - Changes to existing migrations
 - Seed data changes
 - Changes to database relationships
+- Changes to row-level security policies
 - Changes affecting tenant isolation
 
 Never modify an already-applied production migration simply to make it work locally.
 
 Create a new migration when a database change is required.
+
+A migration must run cleanly against an empty database and be safe to run twice. Re-run it after applying it and confirm no changes are pending.
 
 ## 9. Multi-Tenant Security
 
@@ -203,6 +212,25 @@ Particular attention must be given to:
 - AI/RAG features
 
 Security-sensitive changes should receive careful code review before merging.
+
+### Tenant isolation is an invariant, not a review reminder
+
+A rule that depends on every reviewer remembering it on every Pull Request will eventually be missed. Every new endpoint that reads or writes school data must ship with a test that proves a user from one school cannot reach another school's resource.
+
+### A resource in another school returns 404, not 403
+
+Responding `403 Forbidden` to a request for another school's resource confirms that the resource exists. That is enough to enumerate valid ids across tenants, one request at a time.
+
+A resource the caller is not entitled to must be indistinguishable from a resource that does not exist:
+
+```text
+Resource in another school     -> 404
+Resource that does not exist   -> 404
+```
+
+The two responses must be identical, including the body.
+
+The real reason still has to survive somewhere, or an attack in progress becomes invisible. It belongs in the audit log, which only we can read, and never in the response.
 
 ## 10. AI Features
 
@@ -233,6 +261,16 @@ At minimum, verify:
 
 If a check cannot be run, explain the reason in the Pull Request.
 
+### Evidence
+
+A ticked checkbox is a claim, not a test. Where a change adds or alters an endpoint, verify it against a running build and attach the evidence to the Pull Request as PNG screenshots:
+
+- the endpoint exercised through the API documentation UI
+- the same endpoint exercised through `curl`
+- the check run showing lint, build and tests passing
+
+Screenshots must be legible and complete, and must not contain credentials, tokens, or another user's data.
+
 ## 12. Pull Request Checklist
 
 Before requesting review, confirm:
@@ -243,12 +281,14 @@ Before requesting review, confirm:
 - [ ] ESLint passes
 - [ ] Tests pass where applicable
 - [ ] Production build passes
-- [ ] No secrets were committed
+- [ ] No secrets, credentials, tokens or `.env` files were committed
 - [ ] Database changes have been reviewed
-- [ ] Tenant isolation has been considered
-- [ ] Authentication and authorization have been considered
+- [ ] Migrations run from empty and are safe to run twice
+- [ ] Tenant isolation is enforced, and a cross-tenant test covers every new endpoint
+- [ ] Resources outside the caller's tenant return 404, not 403
+- [ ] Authentication and authorization are enforced on the server, not only in the UI
 - [ ] The Pull Request description is complete
-- [ ] Screenshots/recordings are included when relevant
+- [ ] Test evidence is attached where an endpoint changed
 
 ## 13. Emergency Production Fixes
 
