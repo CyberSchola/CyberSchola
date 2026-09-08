@@ -6,10 +6,11 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/backend-ci.yml'
-  # Deliberately not filtered by base branch. A stacked pull request targets
-  # the branch below it rather than develop, and that is exactly when the
-  # checks matter most: it is the first time the combined change is seen.
+
   pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
 
 concurrency:
   group: backend-ci-${{ github.ref }}
