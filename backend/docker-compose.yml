@@ -1,0 +1,58 @@
+# Local development and integration-test dependencies.
+#
+# Production runs against Supabase. This exists so that a developer can work,
+# and the integration suite can run, without a network connection or a shared
+# database that other people are also writing to.
+#
+#   docker compose up -d
+#   pnpm migration:run
+#   pnpm test:integration
+#
+# The image is pinned to the major version Supabase runs, verified against the
+# live project on 2026-09-08 (PostgreSQL 17.6), so a migration that passes here
+# is a migration that will apply there. If Supabase upgrades, bump this and the
+# CI service together or the claim stops being true.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: cyberschola-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cyberschola
+      POSTGRES_PASSWORD: cyberschola_local_only
+      POSTGRES_DB: cyberschola
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Depending on the port being open is not enough. Postgres accepts
+      # connections briefly during startup before it is ready to serve, and a
+      # migration fired into that window fails in a way that looks random.
+      test: ['CMD-SHELL', 'pg_isready -U cyberschola -d cyberschola']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-test:
+    image: postgres:17-alpine
+    container_name: cyberschola-postgres-test
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cyberschola
+      POSTGRES_PASSWORD: cyberschola_local_only
+      POSTGRES_DB: cyberschola_test
+    ports:
+      - '5434:5432'
+    # No volume on purpose. The integration suite drops and rebuilds its
+    # schema on every run, and a persisted volume would let one run's leftover
+    # rows change the next run's result.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cyberschola -d cyberschola_test']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:

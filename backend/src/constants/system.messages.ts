@@ -13,6 +13,8 @@ export const SYSTEM_MESSAGES = {
 
   HEALTH: {
     LIVE: 'Service is running.',
+    READY: 'Service is ready to accept traffic.',
+    NOT_READY: 'Service is not ready to accept traffic.',
   },
 
   AUTH: {
@@ -48,5 +50,6 @@ export const SYSTEM_MESSAGES = {
 
   GENERIC: {
     INTERNAL_ERROR: 'Something went wrong on our side. Please try again.',
+    UNAVAILABLE: 'The service is temporarily unavailable. Please try again shortly.',
   },
 } as const;

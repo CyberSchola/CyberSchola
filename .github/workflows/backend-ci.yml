@@ -74,3 +74,58 @@ jobs:
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
           --verbose
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # A real Postgres, not a mock. Row-level security, partial unique indexes
+    # and check constraints are enforced by the database, so a suite built on a
+    # mocked repository passes whether or not any of them exist.
+    #
+    # Pinned to 17 to match the live Supabase project (verified at 17.6). Testing
+    # against a different major version than production would leave exactly the
+    # gap this job exists to close.
+    #
+    # Testcontainers would also provide this. It was rejected on cost: 185
+    # packages, 13 advisories including 3 high, and a native module that this
+    # project's build-script policy blocks. A service container gives the same
+    # guarantee for nothing.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: cyberschola
+          POSTGRES_PASSWORD: cyberschola_ci_only
+          POSTGRES_DB: cyberschola_test
+        ports:
+          - 5432:5432
+        # Postgres accepts connections briefly before it is ready to serve. A
+        # migration fired into that window fails in a way that looks random.
+        options: >-
+          --health-cmd "pg_isready -U cyberschola -d cyberschola_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: backend/.nvmrc
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Integration tests
+        run: pnpm test:integration
+        env:
+          TEST_DATABASE_URL: postgres://cyberschola:cyberschola_ci_only@localhost:5432/cyberschola_test
