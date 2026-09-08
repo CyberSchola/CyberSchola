@@ -1,5 +1,15 @@
 import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsInt, IsString, Matches, Max, Min, validateSync } from 'class-validator';
+import {
+  IsEnum,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+  validateSync,
+} from 'class-validator';
 
 export enum NodeEnv {
   Development = 'development',
@@ -11,11 +21,10 @@ export enum NodeEnv {
 /**
  * Environment the application currently reads.
  *
- * Only variables that are actually used appear here. The Supabase, database
- * and Redis variables documented in .env.example are validated in BE-F03,
- * when the modules that consume them exist. Declaring them required now would
- * mean every developer needs a database before the process will boot, which
- * is false today.
+ * Only variables that are actually used appear here. The Supabase and Redis
+ * variables documented in .env.example are validated when the modules that
+ * consume them exist, rather than being declared required before anything
+ * reads them.
  */
 export class EnvironmentVariables {
   @IsEnum(NodeEnv, {
@@ -33,6 +42,50 @@ export class EnvironmentVariables {
     message: 'API_PREFIX must be a slash-separated path with no leading or trailing slash',
   })
   API_PREFIX!: string;
+
+  /**
+   * Transaction-mode pooler, used by the application.
+   *
+   * Validated as a postgres URL rather than merely present. A blank or
+   * malformed value would otherwise surface as a driver error on the first
+   * request, long after whoever set it has moved on.
+   */
+  @IsString()
+  @Matches(/^postgres(ql)?:\/\/.+/, {
+    message: 'DATABASE_URL must be a postgres:// or postgresql:// connection string',
+  })
+  DATABASE_URL!: string;
+
+  /**
+   * Session-mode pooler, used only by migrations.
+   *
+   * Optional, because a local Postgres has no separate session endpoint and
+   * the migration data source falls back to DATABASE_URL. Against Supabase it
+   * must be set, or migrations run through the transaction pooler and their
+   * advisory locks land on whichever backend answers next.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^postgres(ql)?:\/\/.+/, {
+    message: 'DIRECT_URL must be a postgres:// or postgresql:// connection string',
+  })
+  DIRECT_URL?: string;
+
+  /**
+   * Exact strings only.
+   *
+   * `IsBooleanString` would also accept "1" and "0", and the data source reads
+   * this as `=== 'true'`. So `DATABASE_SSL=1` would pass validation, look like
+   * it enabled TLS, and silently connect to Supabase without it. The validator
+   * has to agree with the consumer, not merely be in the same spirit.
+   */
+  @IsIn(['true', 'false'], { message: 'DATABASE_SSL must be exactly "true" or "false"' })
+  DATABASE_SSL!: string;
+
+  @IsInt({ message: 'DATABASE_POOL_MAX must be an integer' })
+  @Min(1, { message: 'DATABASE_POOL_MAX must be between 1 and 100' })
+  @Max(100, { message: 'DATABASE_POOL_MAX must be between 1 and 100' })
+  DATABASE_POOL_MAX!: number;
 }
 
 /**
@@ -49,6 +102,10 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
       NODE_ENV: config.NODE_ENV ?? NodeEnv.Development,
       PORT: config.PORT ?? 3000,
       API_PREFIX: config.API_PREFIX ?? 'api/v1',
+      DATABASE_URL: config.DATABASE_URL,
+      DIRECT_URL: config.DIRECT_URL,
+      DATABASE_SSL: config.DATABASE_SSL ?? 'false',
+      DATABASE_POOL_MAX: config.DATABASE_POOL_MAX ?? 10,
     },
     { enableImplicitConversion: true },
   );
