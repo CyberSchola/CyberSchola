@@ -85,6 +85,61 @@ describe('ResponseInterceptor', () => {
     expect(Object.keys(result).sort()).toEqual(['code', 'data', 'message', 'statusCode']);
   });
 
+  // Requested on review: the payload shapes a handler can realistically return.
+  // This contract is the boundary the web application codes against, so each
+  // case is pinned rather than left to inference from the two cases above.
+  describe('payload shapes', () => {
+    it('passes a populated array through unchanged', async () => {
+      const rows = [{ id: 'a' }, { id: 'b' }];
+      const result = await run(rows);
+
+      expect(result.data).toEqual(rows);
+      expect(Array.isArray(result.data)).toBe(true);
+    });
+
+    it('does not collapse a single-element array into the element', async () => {
+      await expect(run([{ id: 'a' }])).resolves.toMatchObject({ data: [{ id: 'a' }] });
+    });
+
+    it('preserves an empty object rather than treating it as absent', async () => {
+      const result = await run({});
+
+      expect(result.data).toEqual({});
+      expect(result.data).not.toBeNull();
+    });
+
+    it('preserves nested structures, including nested nulls', async () => {
+      const payload = { a: { b: [1, { c: null }] }, d: null };
+
+      await expect(run(payload)).resolves.toMatchObject({ data: payload });
+    });
+
+    it('survives a JSON round trip unchanged, which is what the client receives', async () => {
+      const payload = { id: 'a', count: 0, active: false, note: '', tags: [] };
+      const result = await run(payload);
+
+      expect(JSON.parse(JSON.stringify(result))).toEqual({
+        statusCode: 200,
+        code: SUCCESS_CODE,
+        message: SYSTEM_MESSAGES.SUCCESS,
+        data: payload,
+      });
+    });
+
+    it('keeps data as an explicit null in the serialised body, not a dropped key', async () => {
+      // JSON.stringify drops undefined but keeps null. If `data` were left
+      // undefined the key would vanish from the wire and the client's type
+      // would be wrong.
+      const serialised = JSON.stringify(await run(undefined));
+
+      expect(serialised).toContain('"data":null');
+    });
+
+    it('reports a 204 status faithfully rather than forcing 200', async () => {
+      await expect(run(null, 204)).resolves.toMatchObject({ statusCode: 204, data: null });
+    });
+  });
+
   it('does not double-wrap a payload that already looks like an envelope', async () => {
     // A handler returning something envelope-shaped is a mistake, but it must
     // land in `data` rather than being merged into the outer object.

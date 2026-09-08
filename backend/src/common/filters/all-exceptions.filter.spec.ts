@@ -248,6 +248,75 @@ describe('AllExceptionsFilter', () => {
     });
   });
 
+  // Requested on review: an explicit sweep of the three exception families, so
+  // the boundary the web application codes against is pinned rather than
+  // inferred. Whatever is thrown, the body has the same four possible keys and
+  // never carries anything the caller was not meant to see.
+  describe('every exception family produces a well-formed envelope', () => {
+    const ALLOWED_KEYS = ['code', 'details', 'message', 'statusCode'];
+
+    const cases: Array<[string, unknown]> = [
+      ['AppException', new ResourceNotFoundException()],
+      ['AppException with details', new ValidationFailedException(['a must be a string'])],
+      ['AppException with an audit code', new TenantAccessDeniedException()],
+      ['HttpException from the framework', new NotFoundException()],
+      ['HttpException with a payload object', new BadRequestException({ message: ['x'] })],
+      ['HttpException with a string payload', new BadRequestException('plain')],
+      ['unknown Error', new Error('internal detail')],
+      ['thrown string', 'a string'],
+      ['thrown number', 42],
+      ['thrown null', null],
+      ['thrown undefined', undefined],
+      ['thrown plain object', { nested: true }],
+      ['thrown array', [1, 2, 3]],
+    ];
+
+    it.each(cases)('%s: status is a valid HTTP code', (_label, thrown) => {
+      const { status, body } = runFilter(thrown);
+
+      expect(status).toBeGreaterThanOrEqual(400);
+      expect(status).toBeLessThan(600);
+      expect(body.statusCode).toBe(status);
+    });
+
+    it.each(cases)('%s: code is one of the documented identities', (_label, thrown) => {
+      expect(Object.values(ErrorCode)).toContain(runFilter(thrown).body.code);
+    });
+
+    it.each(cases)('%s: message is a non-empty string from system messages', (_label, thrown) => {
+      const { message } = runFilter(thrown).body;
+
+      expect(typeof message).toBe('string');
+      expect((message as string).length).toBeGreaterThan(0);
+    });
+
+    it.each(cases)('%s: body carries no key beyond the documented four', (_label, thrown) => {
+      for (const key of Object.keys(runFilter(thrown).body)) {
+        expect(ALLOWED_KEYS).toContain(key);
+      }
+    });
+
+    it.each(cases)('%s: body is JSON-serialisable, which express requires', (_label, thrown) => {
+      expect(() => JSON.stringify(runFilter(thrown).body)).not.toThrow();
+    });
+
+    it.each(cases)('%s: no audit code reaches the caller', (_label, thrown) => {
+      const serialised = JSON.stringify(runFilter(thrown).body);
+
+      for (const auditCode of Object.values(AuditCode)) {
+        expect(serialised).not.toContain(auditCode);
+      }
+    });
+
+    it.each(cases)('%s: no stack trace reaches the caller', (_label, thrown) => {
+      const serialised = JSON.stringify(runFilter(thrown).body);
+
+      expect(serialised).not.toContain('at ');
+      expect(serialised).not.toContain('.ts:');
+      expect(serialised).not.toContain('node_modules');
+    });
+  });
+
   it('returns only the four documented keys, so the envelope cannot drift', () => {
     expect(Object.keys(runFilter(new ResourceNotFoundException()).body).sort()).toEqual([
       'code',
