@@ -6,10 +6,23 @@ import { appDataSourceOptions } from './data-source';
 /**
  * Database connection for the running application.
  *
- * Global so that modules do not each have to import it. That is a convenience
- * for wiring only: it does not widen data access, because every query still
- * goes through a tenant-scoped action, and the database role the API connects
- * as has row-level security forced on it.
+ * Global purely so that modules do not each have to import it. That is
+ * dependency availability and nothing more.
+ *
+ * To be unambiguous about what this does NOT provide today, because a comment
+ * that describes intended architecture as though it were current is worse than
+ * no comment at all:
+ *
+ * - There is no tenant scoping here. Nothing in BE-F03 constrains a query to
+ *   one school.
+ * - Row-level security is not enforced. The policies, the FORCE ROW LEVEL
+ *   SECURITY declarations and the restricted application role that make them
+ *   bind all arrive with the tenancy work in P1.
+ * - No endpoint is tenant-isolated merely because this module is global. Any
+ *   query written before P1 lands can read every row in its table.
+ *
+ * Until then, treat this module as an unrestricted connection, because that is
+ * exactly what it is.
  */
 @Global()
 @Module({

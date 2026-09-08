@@ -33,8 +33,22 @@ function sslOptions(): PostgresConnectionOptions['ssl'] {
   return env('DATABASE_SSL') === 'true' ? { rejectUnauthorized: true } : false;
 }
 
+/** Environments where a single local Postgres serves both roles. */
+const LOCAL_ENVIRONMENTS = new Set(['development', 'test']);
+
 /**
- * Connection used by migrations.
+ * Markers of a transaction-mode pooler endpoint.
+ *
+ * Supabase's transaction pooler listens on 6543, and its connection string
+ * carries `pgbouncer=true`. Either is enough to know migrations must not use
+ * this URL.
+ */
+export function isTransactionPooler(url: string): boolean {
+  return /:6543(\/|\?|$)/.test(url) || /[?&]pgbouncer=true\b/.test(url);
+}
+
+/**
+ * Connection string for migrations.
  *
  * DIRECT_URL is the session-mode pooler on 5432. Migrations hold advisory
  * locks and run multi-statement transactions, which need the same backend
@@ -42,12 +56,61 @@ function sslOptions(): PostgresConnectionOptions['ssl'] {
  * backend out per transaction, so running migrations through it is a race
  * waiting to be lost.
  *
- * Falls back to DATABASE_URL so that a local Postgres, which has no separate
- * session endpoint, needs only one variable set.
+ * This used to fall back to DATABASE_URL unconditionally, which meant a
+ * production deployment missing DIRECT_URL would silently run migrations
+ * through the transaction pooler: precisely the thing the paragraph above
+ * forbids. The code now enforces what the comment claims.
+ *
+ * Two guards, because they catch different mistakes:
+ *
+ * 1. Outside development and test, DIRECT_URL is required. A missing value is
+ *    a deployment error and should read as one.
+ * 2. Whatever the URL came from, it must not look like a transaction pooler.
+ *    This catches DIRECT_URL being set to the wrong endpoint, which the first
+ *    guard cannot see.
+ */
+export function migrationUrl(): string | undefined {
+  const direct = env('DIRECT_URL');
+  const fallback = env('DATABASE_URL');
+  const nodeEnv = env('NODE_ENV') ?? 'development';
+
+  if (!direct && !LOCAL_ENVIRONMENTS.has(nodeEnv)) {
+    throw new Error(
+      [
+        `DIRECT_URL is required when NODE_ENV is "${nodeEnv}".`,
+        '',
+        'Migrations must run over the session-mode pooler (port 5432). Falling',
+        'back to DATABASE_URL would run them through the transaction pooler,',
+        'where advisory locks and multi-statement transactions are not safe.',
+      ].join('\n'),
+    );
+  }
+
+  const resolved = direct ?? fallback;
+
+  if (resolved && isTransactionPooler(resolved)) {
+    throw new Error(
+      [
+        'The migration connection points at a transaction-mode pooler.',
+        '',
+        'Detected port 6543 or pgbouncer=true. Use the session-mode pooler on',
+        'port 5432 for DIRECT_URL. Running migrations through the transaction',
+        'pooler is unsafe: it hands out a different backend per transaction, so',
+        'advisory locks do not hold.',
+      ].join('\n'),
+    );
+  }
+
+  return resolved;
+}
+
+/**
+ * Connection used by migrations. See migrationUrl() for why the URL is chosen
+ * the way it is.
  */
 export const migrationDataSourceOptions: PostgresConnectionOptions = {
   type: 'postgres',
-  url: env('DIRECT_URL') ?? env('DATABASE_URL'),
+  url: migrationUrl(),
   ssl: sslOptions(),
 
   // Never true. `synchronize` diffs the entities against the live schema and
