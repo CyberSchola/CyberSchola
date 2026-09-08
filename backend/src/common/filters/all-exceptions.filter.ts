@@ -44,6 +44,14 @@ const FAILURE_BY_STATUS: ReadonlyMap<number, PublicFailure> = new Map([
     HttpStatus.UNPROCESSABLE_ENTITY,
     { code: ErrorCode.VALIDATION_ERROR, message: SYSTEM_MESSAGES.VALIDATION.FAILED },
   ],
+  // Without this entry a 503 falls into the server fallback and is reported as
+  // INTERNAL_ERROR, which tells a client the service is broken when in fact it
+  // is temporarily unavailable. The two call for different client behaviour:
+  // one is worth retrying, the other is not.
+  [
+    HttpStatus.SERVICE_UNAVAILABLE,
+    { code: ErrorCode.SERVICE_UNAVAILABLE, message: SYSTEM_MESSAGES.GENERIC.UNAVAILABLE },
+  ],
 ]);
 
 const CLIENT_FALLBACK: PublicFailure = {

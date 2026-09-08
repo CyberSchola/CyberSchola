@@ -15,6 +15,7 @@ import {
   ForbiddenException,
   ResourceAccessDeniedException,
   ResourceNotFoundException,
+  ServiceNotReadyException,
   SubscriptionLimitException,
   TenantAccessDeniedException,
   UnauthenticatedException,
@@ -239,11 +240,11 @@ describe('AllExceptionsFilter', () => {
     });
 
     it('treats an unmapped 5xx as an internal error', () => {
-      const { body } = runFilter(
-        new HttpException('upstream down', HttpStatus.SERVICE_UNAVAILABLE),
-      );
+      // 502 rather than 503: 503 now has its own entry, so it would no longer
+      // exercise the fallback this test exists to cover.
+      const { body } = runFilter(new HttpException('upstream down', HttpStatus.BAD_GATEWAY));
 
-      expect(body.statusCode).toBe(HttpStatus.SERVICE_UNAVAILABLE);
+      expect(body.statusCode).toBe(HttpStatus.BAD_GATEWAY);
       expect(body.code).toBe(ErrorCode.INTERNAL_ERROR);
     });
   });
@@ -269,6 +270,7 @@ describe('AllExceptionsFilter', () => {
       ['thrown undefined', undefined],
       ['thrown plain object', { nested: true }],
       ['thrown array', [1, 2, 3]],
+      ['ServiceNotReadyException', new ServiceNotReadyException()],
     ];
 
     it.each(cases)('%s: status is a valid HTTP code', (_label, thrown) => {

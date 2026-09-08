@@ -117,6 +117,24 @@ export class ApprovalRequiredException extends AppException {
   }
 }
 
+/**
+ * Raised when the process cannot serve traffic because a dependency it needs
+ * is unreachable.
+ *
+ * Carries no detail about which dependency or why. The readiness endpoint is
+ * unauthenticated, and a failure reason names a host, a port and a role. The
+ * detail goes to the log.
+ */
+export class ServiceNotReadyException extends AppException {
+  constructor(message: string = SYSTEM_MESSAGES.HEALTH.NOT_READY) {
+    super({
+      status: HttpStatus.SERVICE_UNAVAILABLE,
+      code: ErrorCode.SERVICE_UNAVAILABLE,
+      message,
+    });
+  }
+}
+
 export class ResourceConflictException extends AppException {
   constructor(message: string = SYSTEM_MESSAGES.RESOURCE.CONFLICT) {
     super({ status: HttpStatus.CONFLICT, code: ErrorCode.CONFLICT, message });
