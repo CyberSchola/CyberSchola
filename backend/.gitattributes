@@ -1,0 +1,10 @@
+# The backend builds and tests on Linux in CI and in the container, while
+# development happens on Windows. Normalising to LF here keeps Prettier's
+# endOfLine setting honest across both.
+* text=auto eol=lf
+
+# Never normalise binaries.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.ico binary
