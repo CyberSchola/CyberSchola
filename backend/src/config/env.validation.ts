@@ -21,9 +21,9 @@ export enum NodeEnv {
 /**
  * Environment the application currently reads.
  *
- * Only variables that are actually used appear here. The Supabase and Redis
- * variables documented in .env.example are validated when the modules that
- * consume them exist, rather than being declared required before anything
+ * Only variables that are actually used appear here. The Supabase, LiveKit and
+ * Paystack variables documented in .env.example are validated when the modules
+ * that consume them exist, rather than being declared required before anything
  * reads them.
  */
 export class EnvironmentVariables {
@@ -86,6 +86,20 @@ export class EnvironmentVariables {
   @Min(1, { message: 'DATABASE_POOL_MAX must be between 1 and 100' })
   @Max(100, { message: 'DATABASE_POOL_MAX must be between 1 and 100' })
   DATABASE_POOL_MAX!: number;
+
+  /**
+   * Redis, used for caching now and for quotas, rate limits and queues later.
+   *
+   * Required rather than optional: the readiness probe treats Redis being down
+   * as not-ready, because it will hold the rate limit and AI quota counters.
+   * Booting without it would mean serving traffic with those controls absent,
+   * which fails open.
+   */
+  @IsString()
+  @Matches(/^rediss?:\/\/.+/, {
+    message: 'REDIS_URL must be a redis:// or rediss:// connection string',
+  })
+  REDIS_URL!: string;
 }
 
 /**
@@ -106,6 +120,7 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
       DIRECT_URL: config.DIRECT_URL,
       DATABASE_SSL: config.DATABASE_SSL ?? 'false',
       DATABASE_POOL_MAX: config.DATABASE_POOL_MAX ?? 10,
+      REDIS_URL: config.REDIS_URL,
     },
     { enableImplicitConversion: true },
   );
