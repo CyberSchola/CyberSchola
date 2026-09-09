@@ -11,6 +11,7 @@ import { SYSTEM_MESSAGES } from '../constants/system.messages';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
 import { ApiSuccessResponseDto } from '../common/dto/api-response.dto';
 import { ServiceNotReadyException } from '../common/exceptions/app.exception';
+import { TenantOptional } from '../tenancy/tenant-optional.decorator';
 import { ReadinessService, type ReadinessReport } from './readiness.service';
 
 export class LivenessDto {
@@ -59,6 +60,12 @@ class ReadinessResponseDto extends ApiSuccessResponseDto<ReadinessDto> {
  * failing dependency never takes a healthy process out of rotation before
  * there is anything meaningful to report.
  */
+/**
+ * Health probes run before there is a school to be in the context of, and an
+ * orchestrator calling them carries no credentials. Marked at the controller
+ * level so both probes inherit it.
+ */
+@TenantOptional()
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
