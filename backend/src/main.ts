@@ -43,6 +43,9 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
+  // The tenant interceptor is NOT registered here. It is bound as
+  // APP_INTERCEPTOR inside TenancyModule, so every way of building the
+  // application inherits it rather than only this entry point.
   app.useGlobalInterceptors(new ResponseInterceptor(app.get(Reflector)));
   app.useGlobalFilters(new AllExceptionsFilter());
 
