@@ -13,6 +13,7 @@ const VALID = {
   DATABASE_URL: 'postgres://user:pass@localhost:5432/cyberschola',
   DATABASE_SSL: 'false',
   DATABASE_POOL_MAX: '10',
+  REDIS_URL: 'redis://localhost:6379',
 } as const;
 
 const withEnv = (overrides: Record<string, unknown> = {}) => ({ ...VALID, ...overrides });
@@ -93,7 +94,28 @@ describe('validateEnv', () => {
   });
 
   it('ignores variables it does not own, so later phases can add their own', () => {
-    expect(() => validateEnv(withEnv({ REDIS_URL: '', SUPABASE_SECRET_KEY: 'x' }))).not.toThrow();
+    expect(() =>
+      validateEnv(withEnv({ SUPABASE_SECRET_KEY: 'x', LIVEKIT_URL: 'wss://x' })),
+    ).not.toThrow();
+  });
+
+  describe('REDIS_URL', () => {
+    it.each(['redis://localhost:6379', 'rediss://user:pw@redis.example.com:6380/0'])(
+      'accepts %s',
+      (url) => {
+        expect(validateEnv(withEnv({ REDIS_URL: url })).REDIS_URL).toBe(url);
+      },
+    );
+
+    it('refuses to boot when it is missing', () => {
+      // Redis holds the rate limit and AI quota counters. Booting without it
+      // would serve traffic with those controls absent, which fails open.
+      expect(() => validateEnv(withEnv({ REDIS_URL: undefined }))).toThrow(/REDIS_URL/);
+    });
+
+    it.each(['', 'localhost:6379', 'http://localhost:6379', 'not a url'])('rejects %s', (url) => {
+      expect(() => validateEnv(withEnv({ REDIS_URL: url }))).toThrow(/REDIS_URL/);
+    });
   });
 
   describe('DATABASE_URL', () => {

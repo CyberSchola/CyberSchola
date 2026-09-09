@@ -1,6 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import type Redis from 'ioredis';
 import { DataSource } from 'typeorm';
+
+import { REDIS_CLIENT } from '../redis/redis.constants';
 
 export type DependencyStatus = 'up' | 'down';
 
@@ -8,6 +11,7 @@ export interface ReadinessReport {
   ready: boolean;
   dependencies: {
     database: DependencyStatus;
+    redis: DependencyStatus;
   };
 }
 
@@ -38,7 +42,10 @@ export class ReadinessService {
    */
   private inFlight?: Promise<ReadinessReport>;
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+  ) {}
 
   async check(): Promise<ReadinessReport> {
     this.inFlight ??= this.runCheck().finally(() => {
@@ -49,12 +56,36 @@ export class ReadinessService {
   }
 
   private async runCheck(): Promise<ReadinessReport> {
-    const database = await this.checkDatabase();
+    // Probed together rather than in sequence. Sequentially, two dependencies
+    // each near the timeout would take twice as long as the timeout, and the
+    // orchestrator would give up before we answered.
+    const [database, redis] = await Promise.all([this.checkDatabase(), this.checkRedis()]);
 
     return {
-      ready: database === 'up',
-      dependencies: { database },
+      ready: database === 'up' && redis === 'up',
+      dependencies: { database, redis },
     };
+  }
+
+  /**
+   * Pings Redis.
+   *
+   * Redis being down is a readiness failure rather than a degraded mode,
+   * because it holds the rate limit and AI quota counters. Serving traffic
+   * without them means those controls fail open, which is worse than serving
+   * no traffic at all.
+   */
+  private async checkRedis(): Promise<DependencyStatus> {
+    try {
+      const reply = await this.withTimeout(this.redis.ping(), PROBE_TIMEOUT_MS);
+      return reply === 'PONG' ? 'up' : 'down';
+    } catch (error) {
+      this.logger.error(
+        'Readiness: redis probe failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+      return 'down';
+    }
   }
 
   /**

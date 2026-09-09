@@ -16,6 +16,9 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
+    "start:worker": "nest start --entryFile worker",
+    "start:worker:dev": "nest start --entryFile worker --watch",
+    "start:worker:prod": "node dist/worker",
     "lint": "eslint \"{src,test}/**/*.ts\" --fix",
     "lint:check": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest",
@@ -39,6 +42,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "dotenv": "^16.4.7",
+    "ioredis": "^5.6.0",
     "pg": "^8.14.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
@@ -68,6 +72,10 @@
     "typescript-eslint": "^8.28.0"
   },
   "pnpm": {
+    "//overrides": "multer is pulled in transitively by @nestjs/platform-express, which still pins 2.2.0 even on its latest release. Three high-severity denial-of-service advisories affect <2.3.0 (GHSA-qfvm-cv95-jqjf, GHSA-535w-7cp7-47q4). Upgrading the parent does not help because NestJS has not bumped it, so the fix is pinned here. Remove this override once @nestjs/platform-express depends on >=2.3.0 on its own.",
+    "overrides": {
+      "multer": ">=2.3.0"
+    },
     "//": "No dependency may run a build or install script. pnpm blocks these by default, but the default is not a guarantee: stating it here makes the policy explicit and reviewable. swagger-ui-dist pulls @scarf/scarf, whose postinstall reports install telemetry. If a future dependency genuinely needs to build (a native module, say), add it to this list in its own commit with a reason.",
     "onlyBuiltDependencies": []
   },

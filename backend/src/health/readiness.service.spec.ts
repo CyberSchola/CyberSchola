@@ -1,6 +1,8 @@
 import { Logger } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 
+import type Redis from 'ioredis';
+
 import { ReadinessService } from './readiness.service';
 
 function makeDataSource(overrides: Record<string, unknown> = {}): DataSource {
@@ -9,6 +11,18 @@ function makeDataSource(overrides: Record<string, unknown> = {}): DataSource {
     query: jest.fn().mockResolvedValue([{ '?column?': 1 }]),
     ...overrides,
   } as unknown as DataSource;
+}
+
+function makeRedis(overrides: Record<string, unknown> = {}): Redis {
+  return { ping: jest.fn().mockResolvedValue('PONG'), ...overrides } as unknown as Redis;
+}
+
+/** Builds the service with both dependencies healthy unless overridden. */
+function makeService(
+  ds: Partial<Record<string, unknown>> = {},
+  redis: Record<string, unknown> = {},
+) {
+  return new ReadinessService(makeDataSource(ds), makeRedis(redis));
 }
 
 describe('ReadinessService', () => {
@@ -23,11 +37,11 @@ describe('ReadinessService', () => {
   });
 
   it('reports ready when the database answers', async () => {
-    const service = new ReadinessService(makeDataSource());
+    const service = makeService();
 
     await expect(service.check()).resolves.toEqual({
       ready: true,
-      dependencies: { database: 'up' },
+      dependencies: { database: 'up', redis: 'up' },
     });
   });
 
@@ -35,7 +49,7 @@ describe('ReadinessService', () => {
     // A probe that touches a table turns a slow query into a false outage, and
     // makes readiness depend on data the probe has no business seeing.
     const query = jest.fn().mockResolvedValue([]);
-    const service = new ReadinessService(makeDataSource({ query }));
+    const service = makeService({ query });
 
     await service.check();
 
@@ -43,17 +57,17 @@ describe('ReadinessService', () => {
   });
 
   it('reports not ready when the data source was never initialised', async () => {
-    const service = new ReadinessService(makeDataSource({ isInitialized: false }));
+    const service = makeService({ isInitialized: false });
 
     await expect(service.check()).resolves.toEqual({
       ready: false,
-      dependencies: { database: 'down' },
+      dependencies: { database: 'down', redis: 'up' },
     });
   });
 
   it('does not attempt a query against an uninitialised data source', async () => {
     const query = jest.fn();
-    const service = new ReadinessService(makeDataSource({ isInitialized: false, query }));
+    const service = makeService({ isInitialized: false, query });
 
     await service.check();
 
@@ -61,23 +75,17 @@ describe('ReadinessService', () => {
   });
 
   it('reports not ready when the query rejects', async () => {
-    const service = new ReadinessService(
-      makeDataSource({
-        query: jest.fn().mockRejectedValue(new Error('ECONNREFUSED')),
-      }),
-    );
+    const service = makeService({ query: jest.fn().mockRejectedValue(new Error('ECONNREFUSED')) });
 
     await expect(service.check()).resolves.toMatchObject({ ready: false });
   });
 
   it('never returns the failure reason, which names a host and a role', async () => {
-    const service = new ReadinessService(
-      makeDataSource({
-        query: jest
-          .fn()
-          .mockRejectedValue(new Error('connect ECONNREFUSED db.internal:5432 as cyberschola_app')),
-      }),
-    );
+    const service = makeService({
+      query: jest
+        .fn()
+        .mockRejectedValue(new Error('connect ECONNREFUSED db.internal:5432 as cyberschola_app')),
+    });
 
     // The endpoint is unauthenticated. The reason belongs in the log.
     const serialised = JSON.stringify(await service.check());
@@ -89,11 +97,7 @@ describe('ReadinessService', () => {
 
   it('logs the failure reason, so it is not simply lost', async () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const service = new ReadinessService(
-      makeDataSource({
-        query: jest.fn().mockRejectedValue(new Error('boom')),
-      }),
-    );
+    const service = makeService({ query: jest.fn().mockRejectedValue(new Error('boom')) });
 
     await service.check();
 
@@ -104,11 +108,9 @@ describe('ReadinessService', () => {
     // Without a timeout the probe waits for the driver's own connect timeout,
     // the orchestrator's probe times out first, and the reason never reaches a
     // log anyone reads.
-    const service = new ReadinessService(
-      makeDataSource({
-        query: jest.fn().mockImplementation(() => new Promise(() => {})),
-      }),
-    );
+    const service = makeService({
+      query: jest.fn().mockImplementation(() => new Promise(() => {})),
+    });
 
     await expect(service.check()).resolves.toMatchObject({ ready: false });
   }, 10_000);
@@ -125,7 +127,7 @@ describe('ReadinessService', () => {
             resolveQuery = resolve;
           }),
       );
-      const service = new ReadinessService(makeDataSource({ query }));
+      const service = makeService({ query });
 
       const probes = [service.check(), service.check(), service.check()];
       resolveQuery([{ ok: 1 }]);
@@ -137,7 +139,7 @@ describe('ReadinessService', () => {
 
     it('starts a fresh query once the previous one has settled', async () => {
       const query = jest.fn().mockResolvedValue([{ ok: 1 }]);
-      const service = new ReadinessService(makeDataSource({ query }));
+      const service = makeService({ query });
 
       await service.check();
       await service.check();
@@ -152,7 +154,7 @@ describe('ReadinessService', () => {
         .fn()
         .mockRejectedValueOnce(new Error('down'))
         .mockResolvedValueOnce([{ ok: 1 }]);
-      const service = new ReadinessService(makeDataSource({ query }));
+      const service = makeService({ query });
 
       await expect(service.check()).resolves.toMatchObject({ ready: false });
       await expect(service.check()).resolves.toMatchObject({ ready: true });
@@ -171,7 +173,7 @@ describe('ReadinessService', () => {
             }),
         )
         .mockResolvedValue([{ ok: 1 }]);
-      const service = new ReadinessService(makeDataSource({ query }));
+      const service = makeService({ query });
 
       await expect(service.check()).resolves.toMatchObject({ ready: false });
       settle([]);
@@ -182,13 +184,85 @@ describe('ReadinessService', () => {
 
   it('resolves rather than throwing, whatever the database does', async () => {
     for (const rejection of [new Error('x'), 'a string', null, undefined]) {
-      const service = new ReadinessService(
-        makeDataSource({ query: jest.fn().mockRejectedValue(rejection) }),
-      );
+      const service = makeService({ query: jest.fn().mockRejectedValue(rejection) });
 
       // A probe that throws produces a 500 from the framework instead of a
       // readable report, which tells an orchestrator nothing useful.
       await expect(service.check()).resolves.toMatchObject({ ready: false });
     }
+  });
+
+  describe('redis', () => {
+    it('reports not ready when redis does not answer', async () => {
+      // Redis holds the rate limit and AI quota counters. Serving traffic
+      // without it means those controls fail open, which is worse than serving
+      // no traffic.
+      const service = makeService({}, { ping: jest.fn().mockRejectedValue(new Error('down')) });
+
+      await expect(service.check()).resolves.toEqual({
+        ready: false,
+        dependencies: { database: 'up', redis: 'down' },
+      });
+    });
+
+    it('reports not ready when redis answers with something other than PONG', async () => {
+      const service = makeService({}, { ping: jest.fn().mockResolvedValue('') });
+
+      await expect(service.check()).resolves.toMatchObject({ ready: false });
+    });
+
+    it('gives up on a hanging redis rather than hanging with it', async () => {
+      const service = makeService(
+        {},
+        { ping: jest.fn().mockImplementation(() => new Promise(() => {})) },
+      );
+
+      await expect(service.check()).resolves.toMatchObject({
+        dependencies: { database: 'up', redis: 'down' },
+      });
+    }, 15_000);
+
+    it('never returns the failure reason, which names a host', async () => {
+      const service = makeService(
+        {},
+        {
+          ping: jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED redis.internal:6379')),
+        },
+      );
+
+      const serialised = JSON.stringify(await service.check());
+
+      expect(serialised).not.toContain('redis.internal');
+      expect(serialised).not.toContain('ECONNREFUSED');
+    });
+
+    it('probes both dependencies concurrently, not one after the other', async () => {
+      // Sequentially, two dependencies each near the timeout would take twice
+      // the timeout, and the orchestrator would give up before we answered.
+      const started: number[] = [];
+      const slow = () =>
+        new Promise((resolve) => {
+          started.push(Date.now());
+          setTimeout(() => resolve([]), 200);
+        });
+
+      const service = makeService(
+        { query: jest.fn().mockImplementation(slow) },
+        {
+          ping: jest.fn().mockImplementation(() => slow().then(() => 'PONG')),
+        },
+      );
+
+      const began = Date.now();
+      await service.check();
+      const elapsed = Date.now() - began;
+
+      expect(started).toHaveLength(2);
+      expect(elapsed).toBeLessThan(380);
+    });
+
+    it('is ready only when both dependencies are up', async () => {
+      await expect(makeService().check()).resolves.toMatchObject({ ready: true });
+    });
   });
 });

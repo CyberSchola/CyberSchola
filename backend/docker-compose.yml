@@ -25,6 +25,10 @@ services:
     ports:
       - '5433:5432'
     volumes:
+      # Named, so local development data survives a restart. Note that a major
+      # version bump makes this volume unreadable by the new server: run
+      # `docker compose down -v` before bumping the image, or the container
+      # crash-loops on an incompatible data directory.
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
       # Depending on the port being open is not enough. Postgres accepts
@@ -45,11 +49,43 @@ services:
       POSTGRES_DB: cyberschola_test
     ports:
       - '5434:5432'
-    # No volume on purpose. The integration suite drops and rebuilds its
-    # schema on every run, and a persisted volume would let one run's leftover
-    # rows change the next run's result.
+    # Genuinely ephemeral, via tmpfs.
+    #
+    # Declaring no volume here is not enough: the postgres image declares an
+    # anonymous VOLUME for its data directory, and Compose reuses that across
+    # container recreation. So the data survived, and a major version bump left
+    # the container crash-looping on "database files are incompatible with
+    # server" while appearing, from the compose file, to be stateless.
+    #
+    # tmpfs makes it real. The directory lives in memory, dies with the
+    # container, and is faster for a suite that rebuilds its schema every run.
+    tmpfs:
+      - /var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U cyberschola -d cyberschola_test']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: cyberschola-redis
+    restart: unless-stopped
+    ports:
+      - '6380:6379'
+    # noeviction is the whole point, not a default worth inheriting.
+    #
+    # maxmemory-policy is server-level, not per logical database, so keeping
+    # cache and quota counters in different DB indexes would not protect the
+    # counters. Under an LRU policy Redis discards whichever keys are least
+    # recently used across the entire instance, which silently deletes AI quota
+    # and rate limit counters and makes those controls fail open with no error.
+    #
+    # Memory is bounded by TTL instead: CacheService refuses to write a key
+    # without one.
+    command: ['redis-server', '--maxmemory-policy', 'noeviction', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
       timeout: 5s
       retries: 10

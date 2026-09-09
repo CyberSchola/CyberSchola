@@ -111,6 +111,21 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      # No command override here: a service container's `options` maps to
+      # docker create flags, not to the container command, so the policy cannot
+      # be set from this block. It does not need to be. noeviction is Redis's
+      # own default, which is what we want and what the integration suite then
+      # asserts explicitly rather than assumes.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -131,3 +146,4 @@ jobs:
         run: pnpm test:integration
         env:
           TEST_DATABASE_URL: postgres://cyberschola:cyberschola_ci_only@localhost:5432/cyberschola_test
+          TEST_REDIS_URL: redis://localhost:6379
