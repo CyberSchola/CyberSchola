@@ -100,6 +100,46 @@ export class EnvironmentVariables {
     message: 'REDIS_URL must be a redis:// or rediss:// connection string',
   })
   REDIS_URL!: string;
+
+  /**
+   * Accepts a Redis whose eviction policy we cannot read.
+   *
+   * Some managed providers disable CONFIG GET entirely, so the boot check
+   * cannot verify that maxmemory-policy is noeviction. The default is to
+   * refuse to start, because an invariant that was never checked is not an
+   * invariant that holds, and the counters it protects fail open when evicted.
+   *
+   * Setting this to "true" records that the guarantee is being made outside
+   * this application. It does not disable the check: a policy we can read and
+   * know to be evicting still refuses to boot.
+   *
+   * Validated with IsIn rather than a boolean-ish check on purpose. DATABASE_SSL
+   * once accepted "1" through IsBooleanString while the code compared against
+   * "true", so it silently ran without TLS. Only the two exact strings pass.
+   */
+  @IsOptional()
+  @IsIn(['true', 'false'], {
+    message: 'REDIS_ALLOW_UNKNOWN_EVICTION_POLICY must be exactly "true" or "false"',
+  })
+  REDIS_ALLOW_UNKNOWN_EVICTION_POLICY?: string;
+}
+
+/**
+ * Treats a blank value as absent.
+ *
+ * dotenv turns `NAME=` in a .env file into the empty string, not undefined, and
+ * class-validator's @IsOptional only skips null and undefined. Without this a
+ * developer who copies .env.example verbatim and leaves an optional variable
+ * blank gets a startup failure telling them the value is malformed, which is
+ * both wrong and confusing: they did not set it at all.
+ *
+ * This mirrors the same helper in data-source.ts, where the identical blank
+ * handling was already needed for the driver options.
+ */
+function optional(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() === ''
+    ? undefined
+    : (value as string | undefined);
 }
 
 /**
@@ -117,10 +157,11 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
       PORT: config.PORT ?? 3000,
       API_PREFIX: config.API_PREFIX ?? 'api/v1',
       DATABASE_URL: config.DATABASE_URL,
-      DIRECT_URL: config.DIRECT_URL,
+      DIRECT_URL: optional(config.DIRECT_URL),
       DATABASE_SSL: config.DATABASE_SSL ?? 'false',
       DATABASE_POOL_MAX: config.DATABASE_POOL_MAX ?? 10,
       REDIS_URL: config.REDIS_URL,
+      REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: optional(config.REDIS_ALLOW_UNKNOWN_EVICTION_POLICY),
     },
     { enableImplicitConversion: true },
   );

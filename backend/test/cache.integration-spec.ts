@@ -43,7 +43,7 @@ describe('CacheService against real Redis', () => {
       // an evicting instance would let that pass here and break in production.
       const result = await checkEvictionPolicy(redis);
 
-      expect(result.safe).toBe(true);
+      expect(result.status).toBe('safe');
     });
 
     it('is noeviction specifically, which is what the code expects', async () => {
