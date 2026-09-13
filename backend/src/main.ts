@@ -1,12 +1,10 @@
 import 'reflect-metadata';
 
-import { Logger, ValidationPipe } from '@nestjs/common';
-import { NestFactory, Reflector } from '@nestjs/core';
+import { Logger } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 
 import { AppModule } from './app.module';
-import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
-import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { setupSwagger } from './common/swagger/setup-swagger';
 import { NodeEnv } from './config/env.validation';
 
@@ -30,24 +28,15 @@ async function bootstrap(): Promise<void> {
 
   app.setGlobalPrefix(prefix);
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      // Strip anything the DTO does not declare, and reject rather than ignore
-      // when a caller sends it. Blueprint rule 24: nothing security-relevant is
-      // ever read from an unvalidated field, and silently dropping an unknown
-      // field hides the fact that a client is sending one.
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: false },
-    }),
-  );
-
-  // The tenant interceptor is NOT registered here. It is bound as
-  // APP_INTERCEPTOR inside TenancyModule, so every way of building the
-  // application inherits it rather than only this entry point.
-  app.useGlobalInterceptors(new ResponseInterceptor(app.get(Reflector)));
-  app.useGlobalFilters(new AllExceptionsFilter());
+  // No global pipe, interceptor or filter is registered here.
+  //
+  // All four are bound in the module graph as APP_PIPE, APP_INTERCEPTOR and
+  // APP_FILTER, so the worker and any future entry point inherit them instead
+  // of each bootstrap file having to remember. Registering them here as well
+  // was not a harmless duplicate: the response interceptor ran twice and every
+  // successful response came back with a complete envelope nested inside its
+  // own data field. main.ts now does only what is genuinely specific to
+  // serving HTTP.
 
   app.enableShutdownHooks();
 
