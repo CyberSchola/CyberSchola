@@ -182,4 +182,48 @@ describe('validateEnv', () => {
       expect(() => validateEnv(withEnv({ DATABASE_POOL_MAX: value }))).toThrow(/DATABASE_POOL_MAX/);
     });
   });
+  describe('optional variables shipped blank in .env.example', () => {
+    // dotenv turns `NAME=` into '' rather than undefined, and @IsOptional only
+    // skips null/undefined. Before this was handled, copying .env.example
+    // verbatim and filling in only the required values produced a startup
+    // failure claiming DIRECT_URL was malformed, when it had not been set.
+    it('treats a blank DIRECT_URL as absent rather than malformed', () => {
+      expect(validateEnv(withEnv({ DIRECT_URL: '' })).DIRECT_URL).toBeUndefined();
+    });
+
+    it('treats a whitespace-only DIRECT_URL as absent too', () => {
+      expect(validateEnv(withEnv({ DIRECT_URL: '   ' })).DIRECT_URL).toBeUndefined();
+    });
+
+    it('still rejects a DIRECT_URL that is set but wrong', () => {
+      // Blank means unset. A real value that is not a postgres URL is still an
+      // error, and relaxing the first must not relax the second.
+      expect(() => validateEnv(withEnv({ DIRECT_URL: 'mysql://h/d' }))).toThrow(/DIRECT_URL/);
+    });
+  });
+
+  describe('REDIS_ALLOW_UNKNOWN_EVICTION_POLICY', () => {
+    it.each(['true', 'false'])('accepts %s', (value) => {
+      expect(
+        validateEnv(withEnv({ REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: value }))
+          .REDIS_ALLOW_UNKNOWN_EVICTION_POLICY,
+      ).toBe(value);
+    });
+
+    it('treats blank as absent, since .env.example ships it blank', () => {
+      expect(
+        validateEnv(withEnv({ REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: '' }))
+          .REDIS_ALLOW_UNKNOWN_EVICTION_POLICY,
+      ).toBeUndefined();
+    });
+
+    it.each(['1', 'yes', 'TRUE', 'True', 'no'])('rejects %s', (value) => {
+      // The enforcement compares against the exact string 'true'. A value that
+      // looks affirmative but is not that string would be silently ignored,
+      // which is how DATABASE_SSL once disabled TLS without anyone noticing.
+      expect(() => validateEnv(withEnv({ REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: value }))).toThrow(
+        /REDIS_ALLOW_UNKNOWN_EVICTION_POLICY/,
+      );
+    });
+  });
 });

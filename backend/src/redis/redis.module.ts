@@ -23,6 +23,13 @@ function redisUrl(): string {
  * One client for the whole process. ioredis multiplexes commands over a single
  * connection, so a client per module would waste connections against a shared
  * instance without making anything faster.
+ *
+ * Failure contract: Redis is required infrastructure. The application does not
+ * start without it, does not serve traffic while it is unavailable (readiness
+ * fails, see ReadinessService), and does not silently substitute the database
+ * for it. That is a deliberate choice rather than an omission, because the
+ * state that will live here next is AI quota and rate-limit counters, and a
+ * cache that quietly falls back is a quota that quietly stops counting.
  */
 @Global()
 @Module({
@@ -32,9 +39,10 @@ function redisUrl(): string {
       useFactory: async (): Promise<Redis> => {
         const client = new Redis(redisUrl(), {
           // Fail a command rather than queue it forever when Redis is gone.
-          // The default retries indefinitely, so a request that touches the
-          // cache hangs instead of falling through to Postgres, and a cache
-          // outage becomes an application outage.
+          // The default retries indefinitely, so a request that touches Redis
+          // hangs until the client gives up, turning an outage into a pile of
+          // stuck requests holding connections. Failing fast lets the request
+          // return an error and lets readiness report the truth.
           maxRetriesPerRequest: 3,
           enableOfflineQueue: false,
           connectTimeout: 5_000,
@@ -43,8 +51,20 @@ function redisUrl(): string {
         });
 
         client.on('error', (error: Error) => {
-          // Logged, not thrown. A cache that is down should degrade reads to
-          // the database, not take the process with it.
+          // Logged, not thrown, and this is not a fallback story.
+          //
+          // Redis is required infrastructure here, not an optional accelerator:
+          // REDIS_URL is mandatory, the connection opens during startup, and
+          // readiness returns 503 while it is down. Nothing degrades to
+          // Postgres, and CacheService does not catch connection errors to
+          // read through to the database.
+          //
+          // The reason this handler does not rethrow is narrower. ioredis emits
+          // `error` on every reconnection attempt, so throwing would turn a
+          // transient blip into a dead process even though the client recovers
+          // on its own. Readiness has already taken this instance out of the
+          // load balancer, so the correct response is to record it and let the
+          // client reconnect.
           logger.error(`Redis connection error: ${error.message}`);
         });
 
