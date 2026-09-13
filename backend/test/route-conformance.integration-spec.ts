@@ -20,7 +20,7 @@ type SupertestFn = typeof supertestModule;
 const maybeWrapped = supertestModule as unknown as { default?: SupertestFn };
 const request: SupertestFn = maybeWrapped.default ?? supertestModule;
 
-import { Controller, Get, Module } from '@nestjs/common';
+import { Controller, Delete, Get, Module, Patch, Post, Put } from '@nestjs/common';
 
 import { AppModule } from '../src/app.module';
 import { collectRoutes, type RouteRecord } from '../src/common/testing/route-inventory';
@@ -38,6 +38,36 @@ import { collectRoutes, type RouteRecord } from '../src/common/testing/route-inv
 class ScopedProbeController {
   @Get()
   read(): { ok: boolean } {
+    return { ok: true };
+  }
+
+  // The remaining verbs and a path parameter exist so the behavioural loop
+  // below is exercised across every shape a real endpoint takes, rather than
+  // only the one the application happens to expose today. Review asked whether
+  // limiting it to GET and static paths was intentional; it was a limitation,
+  // not a decision, so it is gone.
+  @Get(':id')
+  readOne(): { ok: boolean } {
+    return { ok: true };
+  }
+
+  @Post()
+  create(): { ok: boolean } {
+    return { ok: true };
+  }
+
+  @Put(':id')
+  replace(): { ok: boolean } {
+    return { ok: true };
+  }
+
+  @Patch(':id')
+  update(): { ok: boolean } {
+    return { ok: true };
+  }
+
+  @Delete(':id')
+  remove(): { ok: boolean } {
     return { ok: true };
   }
 }
@@ -77,6 +107,34 @@ describe('route conformance', () => {
 
   /** The probe above is not part of the application, so it is excluded. */
   const PROBE_PATH = '/conformance-probe';
+
+  /**
+   * Stands in for a path parameter.
+   *
+   * The value never reaches a handler, because the tenant interceptor runs
+   * before the route's pipes and before the handler itself. It only has to
+   * make the path match.
+   */
+  const SAMPLE_PARAM = '00000000-0000-4000-8000-000000000000';
+
+  /** Issues a route's own verb against its path, with parameters filled in. */
+  function send(route: RouteRecord): Promise<supertestModule.Response> {
+    const path = `/api/v1${route.path.replace(/:[A-Za-z0-9_]+/g, SAMPLE_PARAM)}`;
+    const agent = request(server());
+
+    switch (route.method) {
+      case 'POST':
+        return agent.post(path);
+      case 'PUT':
+        return agent.put(path);
+      case 'PATCH':
+        return agent.patch(path);
+      case 'DELETE':
+        return agent.delete(path);
+      default:
+        return agent.get(path);
+    }
+  }
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
@@ -176,22 +234,62 @@ describe('route conformance', () => {
       expect(JSON.stringify(response.body)).not.toContain('"ok"');
     });
 
+    it('wraps a successful response exactly once', async () => {
+      // Regression guard. main.ts used to re-register the response interceptor
+      // that AppModule already binds as APP_INTERCEPTOR, so every success came
+      // back with a complete envelope nested inside its own data field. This
+      // suite could not have caught that on its own, because Nest's testing
+      // module never runs main.ts, so a lint rule guards the entry point and
+      // this pins the shape the envelope is supposed to have.
+      const response = await request(server()).get('/api/v1/health');
+
+      // Narrowed rather than read off `any`, which the lint rules reject and
+      // which would also let a typo silently assert nothing.
+      const body = response.body as { data?: Record<string, unknown> };
+
+      expect(response.body).toMatchObject({ statusCode: 200, code: 'OK' });
+      expect(response.body).toHaveProperty('data.status', 'ok');
+      expect(body.data).not.toHaveProperty('statusCode');
+      expect(body.data).not.toHaveProperty('data');
+    });
+
     it('rejects every tenant-scoped route the application exposes', async () => {
       const scoped = routes.filter(
-        (route) =>
-          !ALLOWED_WITHOUT_TENANT.has(`${route.method} ${route.path}`) &&
-          route.method === 'GET' &&
-          !route.path.includes(':'),
+        (route) => !ALLOWED_WITHOUT_TENANT.has(`${route.method} ${route.path}`),
       );
 
       // Asserted rather than assumed: an empty list would make this loop pass
       // by doing nothing, which is the exact failure this suite exists to stop.
       expect(scoped.length).toBeGreaterThan(0);
 
+      const refused: string[] = [];
+
       for (const route of scoped) {
-        const response = await request(server()).get(`/api/v1${route.path}`);
-        expect(response.status).toBe(401);
+        const response = await send(route);
+
+        if (response.status !== 401) {
+          refused.push(`${route.method} ${route.path} answered ${response.status}`);
+        }
       }
+
+      // Collected rather than asserted inside the loop, so a failure names
+      // every offending route at once instead of only the first.
+      expect(refused).toEqual([]);
+    });
+
+    it('covers more than GET, and covers routes with path parameters', () => {
+      // The loop above is only as good as what it iterates. Review asked
+      // whether the previous GET-and-static-paths filter was intentional: it
+      // was not, so this pins that the gate now sees every verb and at least
+      // one parameterised path. Without this assertion a future change could
+      // narrow the loop back and nothing would notice.
+      const scoped = routes.filter(
+        (route) => !ALLOWED_WITHOUT_TENANT.has(`${route.method} ${route.path}`),
+      );
+      const methods = new Set(scoped.map((route) => route.method));
+
+      expect([...methods].sort()).toEqual(['DELETE', 'GET', 'PATCH', 'POST', 'PUT']);
+      expect(scoped.some((route) => route.path.includes(':'))).toBe(true);
     });
   });
 });
