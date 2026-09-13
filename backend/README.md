@@ -46,6 +46,10 @@ Twenty decisions were settled before the first commit and they are binding on th
 
 **Authorization is computed, not cached.** The teacher access rule exists once, as a composable query fragment, so a class reassignment takes effect on the next request rather than when a cache expires.
 
+**A platform super admin is an application role, never a database one.** CyberSchola will need cross-tenant operations eventually: platform administration, support tooling, AI and RAG jobs that span schools, quota management. None of that may be implemented by granting the application's database role `SUPERUSER` or `BYPASSRLS`. Those attributes switch off every policy for every query that role makes, including ordinary request traffic, and the test suite stays green while it happens. A platform-level privilege is resolved in application authorization and carried out through explicit, audited, tenant-scoped operations, so `cyberschola_app` stays restricted no matter who is signed in.
+
+**A tenant-owned table is one that has been through `apply_tenant_isolation`.** That function enables and forces row-level security, creates the policy, and issues the application role's grant, in that order and as one call. The application is granted nothing on new tables by default, so a migration that creates a table with a `tenant_id` column and forgets the call produces a permission error the first time the table is touched, rather than a table every school can read. `test/schema-conformance.integration-spec.ts` fails the build if any table with a `tenant_id` column is missing its policy.
+
 ## Layout
 
 ```
