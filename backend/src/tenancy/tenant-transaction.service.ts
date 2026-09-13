@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type EntityManager } from 'typeorm';
 
@@ -25,7 +25,7 @@ import { DataSource, type EntityManager } from 'typeorm';
  * parameterised, so a hostile value is data rather than syntax.
  */
 @Injectable()
-export class TenantTransactionService {
+export class TenantTransactionService implements OnApplicationBootstrap {
   private readonly logger = new Logger(TenantTransactionService.name);
 
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
@@ -71,6 +71,19 @@ export class TenantTransactionService {
   }
 
   /**
+   * Runs the role assertion as the application starts.
+   *
+   * The assertion existed before this hook did, and nothing called it, so the
+   * guarantee it describes was never actually enforced. Wiring it here rather
+   * than into main.ts is the same lesson BE-T02 learned about the HTTP
+   * globals: the worker and any future entry point build this module too, and
+   * a check that only runs from one bootstrap file protects only that one.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    await this.assertRoleCannotBypassRls(process.env.NODE_ENV ?? 'development');
+  }
+
+  /**
    * Asserts at boot that the connected role cannot bypass row-level security.
    *
    * This is the check decision 18A exists for. Supabase's `postgres` role and
@@ -98,8 +111,23 @@ export class TenantTransactionService {
     `);
 
     if (!row) {
-      this.logger.warn('Could not determine the connected role; skipping the BYPASSRLS check.');
-      return;
+      // Fail closed. pg_roles returning nothing for current_user should not
+      // happen, but "should not happen" is not a guarantee, and the thing we
+      // failed to verify is the one that makes every tenant policy real. An
+      // unverified invariant is not a satisfied one, so outside development
+      // this stops the boot rather than logging and serving traffic.
+      const unknown =
+        'Could not determine the connected database role, so it is not possible to prove that ' +
+        'row-level security applies to it. If the role can bypass RLS, every tenant policy is ' +
+        "inert and one school can read another school's data, with nothing in the logs to say " +
+        'so. Refusing to start.';
+
+      if (LOCAL_ENVIRONMENTS.has(nodeEnv)) {
+        this.logger.warn(`${unknown} Allowed here because NODE_ENV is "${nodeEnv}".`);
+        return;
+      }
+
+      throw new Error(unknown);
     }
 
     if (!row.bypassrls && !row.superuser) {
@@ -114,7 +142,7 @@ export class TenantTransactionService {
       "one school can read another school's data. The test suite cannot detect this. " +
       'Connect as the restricted application role instead.';
 
-    if (nodeEnv === 'development' || nodeEnv === 'test') {
+    if (LOCAL_ENVIRONMENTS.has(nodeEnv)) {
       this.logger.warn(`${reason} Allowed here because NODE_ENV is "${nodeEnv}".`);
       return;
     }
@@ -122,5 +150,8 @@ export class TenantTransactionService {
     throw new Error(reason);
   }
 }
+
+/** Environments where a misconfigured local database warns instead of blocking. */
+const LOCAL_ENVIRONMENTS = new Set(['development', 'test']);
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
