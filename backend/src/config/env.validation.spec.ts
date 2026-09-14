@@ -13,6 +13,7 @@ const VALID = {
   DATABASE_URL: 'postgres://user:pass@localhost:5432/cyberschola',
   DATABASE_SSL: 'false',
   DATABASE_POOL_MAX: '10',
+  REDIS_URL: 'redis://localhost:6379',
 } as const;
 
 const withEnv = (overrides: Record<string, unknown> = {}) => ({ ...VALID, ...overrides });
@@ -93,7 +94,28 @@ describe('validateEnv', () => {
   });
 
   it('ignores variables it does not own, so later phases can add their own', () => {
-    expect(() => validateEnv(withEnv({ REDIS_URL: '', SUPABASE_SECRET_KEY: 'x' }))).not.toThrow();
+    expect(() =>
+      validateEnv(withEnv({ SUPABASE_SECRET_KEY: 'x', LIVEKIT_URL: 'wss://x' })),
+    ).not.toThrow();
+  });
+
+  describe('REDIS_URL', () => {
+    it.each(['redis://localhost:6379', 'rediss://user:pw@redis.example.com:6380/0'])(
+      'accepts %s',
+      (url) => {
+        expect(validateEnv(withEnv({ REDIS_URL: url })).REDIS_URL).toBe(url);
+      },
+    );
+
+    it('refuses to boot when it is missing', () => {
+      // Redis holds the rate limit and AI quota counters. Booting without it
+      // would serve traffic with those controls absent, which fails open.
+      expect(() => validateEnv(withEnv({ REDIS_URL: undefined }))).toThrow(/REDIS_URL/);
+    });
+
+    it.each(['', 'localhost:6379', 'http://localhost:6379', 'not a url'])('rejects %s', (url) => {
+      expect(() => validateEnv(withEnv({ REDIS_URL: url }))).toThrow(/REDIS_URL/);
+    });
   });
 
   describe('DATABASE_URL', () => {
@@ -158,6 +180,50 @@ describe('validateEnv', () => {
       // Every replica and the worker share one pooler budget, so an oversized
       // per-process pool exhausts it long before the database is under strain.
       expect(() => validateEnv(withEnv({ DATABASE_POOL_MAX: value }))).toThrow(/DATABASE_POOL_MAX/);
+    });
+  });
+  describe('optional variables shipped blank in .env.example', () => {
+    // dotenv turns `NAME=` into '' rather than undefined, and @IsOptional only
+    // skips null/undefined. Before this was handled, copying .env.example
+    // verbatim and filling in only the required values produced a startup
+    // failure claiming DIRECT_URL was malformed, when it had not been set.
+    it('treats a blank DIRECT_URL as absent rather than malformed', () => {
+      expect(validateEnv(withEnv({ DIRECT_URL: '' })).DIRECT_URL).toBeUndefined();
+    });
+
+    it('treats a whitespace-only DIRECT_URL as absent too', () => {
+      expect(validateEnv(withEnv({ DIRECT_URL: '   ' })).DIRECT_URL).toBeUndefined();
+    });
+
+    it('still rejects a DIRECT_URL that is set but wrong', () => {
+      // Blank means unset. A real value that is not a postgres URL is still an
+      // error, and relaxing the first must not relax the second.
+      expect(() => validateEnv(withEnv({ DIRECT_URL: 'mysql://h/d' }))).toThrow(/DIRECT_URL/);
+    });
+  });
+
+  describe('REDIS_ALLOW_UNKNOWN_EVICTION_POLICY', () => {
+    it.each(['true', 'false'])('accepts %s', (value) => {
+      expect(
+        validateEnv(withEnv({ REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: value }))
+          .REDIS_ALLOW_UNKNOWN_EVICTION_POLICY,
+      ).toBe(value);
+    });
+
+    it('treats blank as absent, since .env.example ships it blank', () => {
+      expect(
+        validateEnv(withEnv({ REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: '' }))
+          .REDIS_ALLOW_UNKNOWN_EVICTION_POLICY,
+      ).toBeUndefined();
+    });
+
+    it.each(['1', 'yes', 'TRUE', 'True', 'no'])('rejects %s', (value) => {
+      // The enforcement compares against the exact string 'true'. A value that
+      // looks affirmative but is not that string would be silently ignored,
+      // which is how DATABASE_SSL once disabled TLS without anyone noticing.
+      expect(() => validateEnv(withEnv({ REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: value }))).toThrow(
+        /REDIS_ALLOW_UNKNOWN_EVICTION_POLICY/,
+      );
     });
   });
 });

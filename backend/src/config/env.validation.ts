@@ -21,9 +21,9 @@ export enum NodeEnv {
 /**
  * Environment the application currently reads.
  *
- * Only variables that are actually used appear here. The Supabase and Redis
- * variables documented in .env.example are validated when the modules that
- * consume them exist, rather than being declared required before anything
+ * Only variables that are actually used appear here. The Supabase, LiveKit and
+ * Paystack variables documented in .env.example are validated when the modules
+ * that consume them exist, rather than being declared required before anything
  * reads them.
  */
 export class EnvironmentVariables {
@@ -86,6 +86,60 @@ export class EnvironmentVariables {
   @Min(1, { message: 'DATABASE_POOL_MAX must be between 1 and 100' })
   @Max(100, { message: 'DATABASE_POOL_MAX must be between 1 and 100' })
   DATABASE_POOL_MAX!: number;
+
+  /**
+   * Redis, used for caching now and for quotas, rate limits and queues later.
+   *
+   * Required rather than optional: the readiness probe treats Redis being down
+   * as not-ready, because it will hold the rate limit and AI quota counters.
+   * Booting without it would mean serving traffic with those controls absent,
+   * which fails open.
+   */
+  @IsString()
+  @Matches(/^rediss?:\/\/.+/, {
+    message: 'REDIS_URL must be a redis:// or rediss:// connection string',
+  })
+  REDIS_URL!: string;
+
+  /**
+   * Accepts a Redis whose eviction policy we cannot read.
+   *
+   * Some managed providers disable CONFIG GET entirely, so the boot check
+   * cannot verify that maxmemory-policy is noeviction. The default is to
+   * refuse to start, because an invariant that was never checked is not an
+   * invariant that holds, and the counters it protects fail open when evicted.
+   *
+   * Setting this to "true" records that the guarantee is being made outside
+   * this application. It does not disable the check: a policy we can read and
+   * know to be evicting still refuses to boot.
+   *
+   * Validated with IsIn rather than a boolean-ish check on purpose. DATABASE_SSL
+   * once accepted "1" through IsBooleanString while the code compared against
+   * "true", so it silently ran without TLS. Only the two exact strings pass.
+   */
+  @IsOptional()
+  @IsIn(['true', 'false'], {
+    message: 'REDIS_ALLOW_UNKNOWN_EVICTION_POLICY must be exactly "true" or "false"',
+  })
+  REDIS_ALLOW_UNKNOWN_EVICTION_POLICY?: string;
+}
+
+/**
+ * Treats a blank value as absent.
+ *
+ * dotenv turns `NAME=` in a .env file into the empty string, not undefined, and
+ * class-validator's @IsOptional only skips null and undefined. Without this a
+ * developer who copies .env.example verbatim and leaves an optional variable
+ * blank gets a startup failure telling them the value is malformed, which is
+ * both wrong and confusing: they did not set it at all.
+ *
+ * This mirrors the same helper in data-source.ts, where the identical blank
+ * handling was already needed for the driver options.
+ */
+function optional(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() === ''
+    ? undefined
+    : (value as string | undefined);
 }
 
 /**
@@ -103,9 +157,11 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
       PORT: config.PORT ?? 3000,
       API_PREFIX: config.API_PREFIX ?? 'api/v1',
       DATABASE_URL: config.DATABASE_URL,
-      DIRECT_URL: config.DIRECT_URL,
+      DIRECT_URL: optional(config.DIRECT_URL),
       DATABASE_SSL: config.DATABASE_SSL ?? 'false',
       DATABASE_POOL_MAX: config.DATABASE_POOL_MAX ?? 10,
+      REDIS_URL: config.REDIS_URL,
+      REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: optional(config.REDIS_ALLOW_UNKNOWN_EVICTION_POLICY),
     },
     { enableImplicitConversion: true },
   );
