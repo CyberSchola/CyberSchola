@@ -103,7 +103,24 @@ describe('route conformance', () => {
    * Sign-in endpoints join it in BE-A01, because they run before there is a
    * membership to resolve a tenant from.
    */
-  const ALLOWED_WITHOUT_TENANT = new Set(['GET /health', 'GET /health/ready']);
+  const ALLOWED_WITHOUT_TENANT = new Set([
+    'GET /health',
+    'GET /health/ready',
+    // Authenticated, but by definition has no school yet: it is the route that
+    // tells a caller which schools there are to choose from.
+    'GET /me/schools',
+  ]);
+
+  /**
+   * Routes that legitimately operate without an authenticated caller.
+   *
+   * A different axis from the list above, and deliberately shorter. Every entry
+   * here is reachable by anyone on the internet, so each one is a decision
+   * rather than a convenience. Note what is *not* here: GET /me/schools is
+   * tenant-optional but not public, which is the case that justifies keeping
+   * the two decorators separate.
+   */
+  const ALLOWED_WITHOUT_AUTH = new Set(['GET /health', 'GET /health/ready']);
 
   /** The probe above is not part of the application, so it is excluded. */
   const PROBE_PATH = '/conformance-probe';
@@ -192,13 +209,16 @@ describe('route conformance', () => {
       expect([...ALLOWED_WITHOUT_TENANT].filter((entry) => !signatures.has(entry))).toEqual([]);
     });
 
-    it('is exactly the two health probes today', () => {
+    it('is exactly the three routes we expect today', () => {
+      // Pinned to the literal set rather than compared against the allow list,
+      // so widening the exemption means editing two places and explaining it
+      // twice. This assertion is what caught GET /me/schools being added.
       const optional = routes
         .filter((route) => route.tenantOptional)
         .map((route) => `${route.method} ${route.path}`)
         .sort();
 
-      expect(optional).toEqual(['GET /health', 'GET /health/ready']);
+      expect(optional).toEqual(['GET /health', 'GET /health/ready', 'GET /me/schools']);
     });
 
     it('does not exempt the probe, so the behavioural checks below mean something', () => {
@@ -206,6 +226,48 @@ describe('route conformance', () => {
 
       expect(probe).toBeDefined();
       expect(probe?.tenantOptional).toBe(false);
+    });
+  });
+
+  describe('the public allow list', () => {
+    it('covers every route that opts out of authentication', () => {
+      const unlisted = routes
+        .filter((route) => route.isPublic)
+        .map((route) => `${route.method} ${route.path}`)
+        .filter((signature) => !ALLOWED_WITHOUT_AUTH.has(signature));
+
+      // If this fails, a route was marked @Public() without being added here.
+      // That is a route anyone on the internet can reach, so it belongs in a
+      // diff a reviewer is shown rather than in a decorator nobody notices.
+      expect(unlisted).toEqual([]);
+    });
+
+    it('contains no stale entries', () => {
+      const signatures = new Set(routes.map((route) => `${route.method} ${route.path}`));
+
+      expect([...ALLOWED_WITHOUT_AUTH].filter((entry) => !signatures.has(entry))).toEqual([]);
+    });
+
+    it('is a strict subset of the tenant-optional list', () => {
+      // A public route cannot require a school: there is nobody to resolve one
+      // from. The reverse is not true, and that asymmetry is the point.
+      const notTenantOptional = [...ALLOWED_WITHOUT_AUTH].filter(
+        (entry) => !ALLOWED_WITHOUT_TENANT.has(entry),
+      );
+
+      expect(notTenantOptional).toEqual([]);
+    });
+
+    it('proves the two axes are genuinely independent', () => {
+      // The assertion that keeps @Public() and @TenantOptional() from being
+      // collapsed into one decorator. If this ever becomes empty, someone has
+      // removed the authenticated-but-tenantless case and the justification for
+      // two decorators has gone with it.
+      const authenticatedButTenantless = [...ALLOWED_WITHOUT_TENANT].filter(
+        (entry) => !ALLOWED_WITHOUT_AUTH.has(entry),
+      );
+
+      expect(authenticatedButTenantless).toContain('GET /me/schools');
     });
   });
 
@@ -251,6 +313,23 @@ describe('route conformance', () => {
       expect(response.body).toHaveProperty('data.status', 'ok');
       expect(body.data).not.toHaveProperty('statusCode');
       expect(body.data).not.toHaveProperty('data');
+    });
+
+    it('refuses an authenticated-but-tenantless route without a token', async () => {
+      // GET /me/schools is @TenantOptional() but not @Public(). If the guard
+      // were skipped for tenant-optional routes, this would answer 200 and
+      // anyone could read a person's school memberships.
+      const response = await request(server()).get('/api/v1/me/schools');
+
+      expect(response.status).toBe(401);
+    });
+
+    it('rejects a forged bearer token rather than ignoring it', async () => {
+      const response = await request(server())
+        .get(`/api/v1${PROBE_PATH}`)
+        .set('authorization', 'Bearer not.a.real.token');
+
+      expect(response.status).toBe(401);
     });
 
     it('rejects every tenant-scoped route the application exposes', async () => {
