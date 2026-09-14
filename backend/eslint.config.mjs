@@ -37,4 +37,32 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The HTTP contract belongs to the module graph, not to an entry point.
+    //
+    // Registering a global on the application instance applies it only to the
+    // bootstrap file that ran, so the worker and every future entry point go
+    // without it. Registering it in both places is worse than either: BE-T02
+    // shipped a main.ts that re-registered the response interceptor already
+    // bound as APP_INTERCEPTOR, and every successful response came back with a
+    // complete envelope nested inside its own data field.
+    //
+    // A unit test cannot catch this. Nest's testing module never executes
+    // main.ts, so the suite was green while the running API was wrong. A lint
+    // rule sees the source itself, which is the only layer that does.
+    files: ['src/**/*.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'CallExpression[callee.property.name=/^useGlobal(Pipes|Interceptors|Filters|Guards)$/]',
+          message:
+            'Bind this in the module graph instead: APP_PIPE, APP_INTERCEPTOR, APP_FILTER or ' +
+            'APP_GUARD in a @Module providers array. Registering it on the application instance ' +
+            'covers only this entry point, and doing both runs it twice.',
+        },
+      ],
+    },
+  },
 );
