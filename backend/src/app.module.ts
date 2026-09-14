@@ -1,14 +1,17 @@
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 
+import { AuthGuard } from './auth/auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor';
 
 import { validateEnv } from './config/env.validation';
+import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
+import { IdentityModule } from './identity/identity.module';
 import { RedisModule } from './redis/redis.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 
@@ -31,7 +34,9 @@ import { TenancyModule } from './tenancy/tenancy.module';
     }),
     DatabaseModule,
     RedisModule,
+    AuthModule,
     TenancyModule,
+    IdentityModule,
     HealthModule,
   ],
   /**
@@ -50,15 +55,24 @@ import { TenancyModule } from './tenancy/tenancy.module';
    *
    * Order matters and is the registration order below:
    *
-   * 1. TenantContextInterceptor rejects a request with no resolvable tenant
-   *    before any handler can touch school data.
-   * 2. ResponseInterceptor wraps whatever comes back in the envelope.
+   * 1. AuthGuard establishes who is calling. Nest runs guards before every
+   *    interceptor, so an unauthenticated request is refused before any of the
+   *    work below happens.
+   * 2. TenantContextInterceptor resolves which school the caller is acting in
+   *    and opens the one request context.
+   * 3. ResponseInterceptor wraps whatever comes back in the envelope.
    *
-   * The filter sits outside that ordering: it catches whatever either of them
-   * throws, including the tenant rejection, so a refusal is shaped like every
-   * other error rather than like a framework default.
+   * The guard and the interceptor are deliberately separate: the guard answers
+   * "who", the interceptor answers "where", and only the interceptor opens a
+   * context. Two places opening one would make it possible for one to be
+   * skipped.
+   *
+   * The filter sits outside that ordering: it catches whatever any of them
+   * throws, including the authentication and tenant rejections, so a refusal is
+   * shaped like every other error rather than like a framework default.
    */
   providers: [
+    { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

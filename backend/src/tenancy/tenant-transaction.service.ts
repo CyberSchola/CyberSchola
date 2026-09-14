@@ -41,15 +41,84 @@ export class TenantTransactionService implements OnApplicationBootstrap {
     tenantId: string,
     work: (manager: EntityManager) => Promise<T>,
   ): Promise<T> {
-    if (!UUID_PATTERN.test(tenantId)) {
-      // The column is uuid, so a malformed value would fail at the cast inside
-      // current_tenant_id() with a confusing error from deep in a policy.
-      // Rejecting it here says what actually went wrong.
+    return this.withSessionContext({ tenantId }, work);
+  }
+
+  /**
+   * Runs `work` with only the user context set.
+   *
+   * This is the bootstrap path, and the only place that legitimately runs
+   * without a tenant while still reading a tenant-owned table. The membership
+   * policy permits a row when `user_id = current_user_id()`, so a caller here
+   * sees their own memberships and nothing else, which is exactly what is
+   * needed to discover which schools they may act in.
+   *
+   * It cannot see anything else: with no tenant set, `current_tenant_id()` is
+   * NULL, so the other half of that policy is false and every other
+   * tenant-owned table returns nothing at all.
+   */
+  async runInUserContext<T>(
+    userId: string,
+    work: (manager: EntityManager) => Promise<T>,
+  ): Promise<T> {
+    return this.withSessionContext({ userId }, work);
+  }
+
+  /**
+   * Runs `work` with both the user and the tenant in context.
+   *
+   * The normal state for a request that has been authenticated and resolved.
+   */
+  async runInUserAndTenantContext<T>(
+    userId: string,
+    tenantId: string,
+    work: (manager: EntityManager) => Promise<T>,
+  ): Promise<T> {
+    return this.withSessionContext({ userId, tenantId }, work);
+  }
+
+  /**
+   * Opens one transaction and sets the session variables the policies read.
+   *
+   * The three methods above are thin on purpose. This is the part that is
+   * dangerous to get wrong, so it exists exactly once:
+   *
+   * **SET LOCAL, never SET.** `set_config(..., true)` is transaction-scoped and
+   * discarded at commit. A non-local setting persists on the connection, and
+   * under the transaction pooler that connection goes to the next caller, who
+   * would inherit somebody else's identity. That is a cross-tenant read created
+   * by one boolean.
+   *
+   * **Parameterised, never interpolated.** Both values originate outside the
+   * process: one from a verified token subject, one from a school selector.
+   * `set_config($1, $2, true)` makes a hostile value data rather than syntax.
+   */
+  private async withSessionContext<T>(
+    context: { userId?: string; tenantId?: string },
+    work: (manager: EntityManager) => Promise<T>,
+  ): Promise<T> {
+    // The columns are uuid, so a malformed value would otherwise fail at the
+    // cast inside current_tenant_id() or current_user_id(), with a confusing
+    // error raised from deep inside a policy. Rejecting it here says what
+    // actually went wrong.
+    if (context.tenantId !== undefined && !UUID_PATTERN.test(context.tenantId)) {
       throw new Error(`Refusing to open a tenant context for a non-uuid tenant id.`);
     }
 
+    if (context.userId !== undefined && !UUID_PATTERN.test(context.userId)) {
+      throw new Error(`Refusing to open a user context for a non-uuid user id.`);
+    }
+
     return this.dataSource.transaction(async (manager) => {
-      await manager.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+      if (context.userId !== undefined) {
+        await manager.query(`SELECT set_config('app.current_user', $1, true)`, [context.userId]);
+      }
+
+      if (context.tenantId !== undefined) {
+        await manager.query(`SELECT set_config('app.current_tenant', $1, true)`, [
+          context.tenantId,
+        ]);
+      }
 
       return work(manager);
     });

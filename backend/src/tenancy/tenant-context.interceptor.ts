@@ -6,7 +6,7 @@ import {
   type NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { Request } from 'express';
+import { VERIFIED_IDENTITY, type AuthenticatedRequest } from '../auth/auth.guard';
 import { randomUUID } from 'node:crypto';
 import { from, type Observable, switchMap } from 'rxjs';
 
@@ -46,24 +46,41 @@ export class TenantContextInterceptor implements NestInterceptor {
       [context.getHandler(), context.getClass()],
     );
 
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const requestId =
+      typeof request.headers['x-request-id'] === 'string'
+        ? request.headers['x-request-id']
+        : randomUUID();
+
     if (tenantOptional === true) {
-      return next.handle();
+      // No school, but there may still be a caller. A context is opened with
+      // just the user so that an authenticated tenant-optional route, such as
+      // "which schools do I belong to", can read who is asking. Without this
+      // the only way to write that route would be to mark it public, which
+      // would drop authentication from a route returning someone's memberships.
+      //
+      // requireTenantId() throws inside this context, which is correct: a
+      // tenant-scoped query does not belong on a tenant-optional route.
+      const identity = request[VERIFIED_IDENTITY];
+
+      return runWithRequestContext({ userId: identity?.userId, requestId }, () => next.handle());
     }
 
-    const request = context.switchToHttp().getRequest<Request>();
-
     return from(this.resolver.resolve(request)).pipe(
-      switchMap((tenantId) => {
-        if (!tenantId) {
+      switchMap((resolved) => {
+        if (!resolved) {
           throw new UnauthenticatedException();
         }
 
-        const requestId =
-          typeof request.headers['x-request-id'] === 'string'
-            ? request.headers['x-request-id']
-            : randomUUID();
-
-        return runWithRequestContext({ tenantId, requestId }, () => next.handle());
+        return runWithRequestContext(
+          {
+            tenantId: resolved.tenantId,
+            userId: resolved.userId,
+            role: resolved.role,
+            requestId,
+          },
+          () => next.handle(),
+        );
       }),
     );
   }

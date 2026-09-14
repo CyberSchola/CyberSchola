@@ -7,15 +7,20 @@ import { AsyncLocalStorage } from 'node:async_hooks';
  * string. `tenantId` and `role` come from a membership lookup against our own
  * tables, and the token supplies only an identity to look up.
  *
- * `role` and `permissions` are declared but not populated until BE-A01, where
- * authentication lands. They are here now so that the shape does not change
- * underneath the guard, the actions and the conformance suite once it does.
+ * `tenantId` is optional, and that is not laxity. There is a real and narrow
+ * case for a context with a user and no school: a signed-in person asking
+ * which schools they belong to, before they have chosen one. Making that
+ * representable is what keeps it from being forced through a public route
+ * instead, which would drop authentication entirely. Anything that needs a
+ * school calls `requireTenantId`, which throws rather than returning undefined.
  */
 export interface RequestContext {
-  /** The school this request acts within. */
-  readonly tenantId: string;
-  /** Who is acting. Populated in BE-A01. */
+  /** The school this request acts within, if one has been chosen. */
+  readonly tenantId?: string;
+  /** Who is acting, from a verified token subject. */
   readonly userId?: string;
+  /** The caller's role in this school, from the membership row. */
+  readonly role?: string;
   /** Correlates log lines for one request. */
   readonly requestId: string;
 }
@@ -74,5 +79,36 @@ export function requireTenantId(): string {
     );
   }
 
+  if (context.tenantId === undefined) {
+    // A context exists, so this is an authenticated request; it simply has no
+    // school chosen. Reaching a tenant-scoped query from such a route is a
+    // routing mistake rather than a missing context, and the two deserve
+    // different messages.
+    throw new Error(
+      'The request context has no tenant. This route resolved a user but no school, ' +
+        'which is the @TenantOptional() path. Tenant-scoped work does not belong here.',
+    );
+  }
+
   return context.tenantId;
+}
+
+/**
+ * The current user, or an error.
+ *
+ * The same argument as `requireTenantId`: code that asks for the caller has
+ * already decided it needs one, and the alternative is an optional chain that
+ * silently treats "nobody" as an ordinary value.
+ */
+export function requireUserId(): string {
+  const context = storage.getStore();
+
+  if (!context?.userId) {
+    throw new Error(
+      'No authenticated user is in scope. A route that reads the caller must be ' +
+        'authenticated, and a worker job must carry its own actor in the payload.',
+    );
+  }
+
+  return context.userId;
 }

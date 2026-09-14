@@ -122,6 +122,26 @@ export class EnvironmentVariables {
     message: 'REDIS_ALLOW_UNKNOWN_EVICTION_POLICY must be exactly "true" or "false"',
   })
   REDIS_ALLOW_UNKNOWN_EVICTION_POLICY?: string;
+
+  /**
+   * The Supabase project URL.
+   *
+   * Required rather than optional: authentication is not something the
+   * application can degrade without. Booting without it would mean every route
+   * either rejecting everyone or, far worse, someone later "temporarily"
+   * disabling the guard to get past it.
+   *
+   * The token issuer is derived from this rather than configured separately,
+   * so the two cannot disagree.
+   */
+  @IsString()
+  @Matches(/^https:\/\/.+/, { message: 'SUPABASE_URL must be an https:// URL' })
+  SUPABASE_URL!: string;
+
+  /** Where the project publishes the public keys its tokens are signed with. */
+  @IsString()
+  @Matches(/^https:\/\/.+/, { message: 'SUPABASE_JWKS_URL must be an https:// URL' })
+  SUPABASE_JWKS_URL!: string;
 }
 
 /**
@@ -162,6 +182,8 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
       DATABASE_POOL_MAX: config.DATABASE_POOL_MAX ?? 10,
       REDIS_URL: config.REDIS_URL,
       REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: optional(config.REDIS_ALLOW_UNKNOWN_EVICTION_POLICY),
+      SUPABASE_URL: config.SUPABASE_URL,
+      SUPABASE_JWKS_URL: config.SUPABASE_JWKS_URL,
     },
     { enableImplicitConversion: true },
   );

@@ -153,3 +153,13 @@ jobs:
           DATABASE_SSL: 'false'
           REDIS_URL: redis://localhost:6379
           NODE_ENV: test
+          # Placeholders, and deliberately not real credentials. Environment
+          # validation requires these, so the application refuses to boot
+          # without them; nothing in CI verifies a token against Supabase.
+          # The verifier constructs its key fetcher lazily and never calls out
+          # unless a token arrives, and the suites that exercise verification
+          # generate their own keypair and serve their own JWKS on localhost.
+          # Pointing CI at the real project would put live credentials in the
+          # build and make it fail when someone else's service is down.
+          SUPABASE_URL: https://ci-placeholder.supabase.co
+          SUPABASE_JWKS_URL: https://ci-placeholder.supabase.co/auth/v1/.well-known/jwks.json

@@ -2,17 +2,31 @@ import { type CallHandler, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { firstValueFrom, of } from 'rxjs';
 
+import { VERIFIED_IDENTITY } from '../auth/auth.guard';
 import { UnauthenticatedException } from '../common/exceptions/app.exception';
 import { getRequestContext } from './request-context';
 import { TenantContextInterceptor } from './tenant-context.interceptor';
-import type { TenantResolver } from './tenant-resolver';
+import type { ResolvedTenant, TenantResolver } from './tenant-resolver';
 
 const TENANT = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+const USER = '11111111-2222-4333-8444-555555555555';
 
-function makeContext(headers: Record<string, string> = {}, type = 'http'): ExecutionContext {
+const RESOLVED: ResolvedTenant = { tenantId: TENANT, userId: USER, role: 'TEACHER' };
+
+function makeContext(
+  headers: Record<string, string> = {},
+  type = 'http',
+  identity?: { userId: string },
+): ExecutionContext {
+  const request: Record<string | symbol, unknown> = { headers };
+
+  if (identity) {
+    request[VERIFIED_IDENTITY] = identity;
+  }
+
   return {
     getType: () => type,
-    switchToHttp: () => ({ getRequest: () => ({ headers }) }),
+    switchToHttp: () => ({ getRequest: () => request }),
     getHandler: () => function handler() {},
     getClass: () => class Controller {},
   } as unknown as ExecutionContext;
@@ -24,9 +38,9 @@ interface SpiedResolver extends TenantResolver {
   calls: jest.Mock;
 }
 
-function resolverReturning(value: string | null): SpiedResolver {
+function resolverReturning(value: ResolvedTenant | null): SpiedResolver {
   const calls = jest.fn().mockResolvedValue(value);
-  return { resolve: (request) => calls(request) as Promise<string | null>, calls };
+  return { resolve: (request) => calls(request) as Promise<ResolvedTenant | null>, calls };
 }
 
 describe('TenantContextInterceptor', () => {
@@ -44,8 +58,6 @@ describe('TenantContextInterceptor', () => {
 
   describe('when no tenant can be resolved', () => {
     it('rejects the request rather than letting the handler run', async () => {
-      // The default state until authentication lands. An endpoint added before
-      // then must not serve school data by accident.
       const handler = jest.fn();
       const interceptor = build(resolverReturning(null));
 
@@ -57,9 +69,9 @@ describe('TenantContextInterceptor', () => {
     });
 
     it('reports 401 rather than 403', async () => {
-      // Not knowing who is calling is an authentication problem. A 403 would
-      // claim we know who they are and are refusing them, which is a stronger
-      // statement than we can support.
+      // Not knowing which school a caller acts in is an authentication problem.
+      // A 403 would claim we know who they are and are refusing them, which is
+      // a stronger statement than we can support.
       const interceptor = build(resolverReturning(null));
 
       const error = await firstValueFrom(
@@ -71,8 +83,11 @@ describe('TenantContextInterceptor', () => {
   });
 
   describe('when the route is marked @TenantOptional()', () => {
-    it('lets the request through without resolving anything', async () => {
+    beforeEach(() => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(true);
+    });
+
+    it('lets the request through without resolving anything', async () => {
       const resolver = resolverReturning(null);
       const interceptor = build(resolver);
 
@@ -80,16 +95,53 @@ describe('TenantContextInterceptor', () => {
         firstValueFrom(interceptor.intercept(makeContext(), nextReturning('ok'))),
       ).resolves.toBe('ok');
 
-      // Not merely allowed through: the resolver is not even consulted, so a
-      // health probe costs no lookup.
+      // Not merely allowed through: the resolver is not consulted at all, so a
+      // health probe costs no database lookup.
       expect(resolver.calls).not.toHaveBeenCalled();
     });
 
     it('leaves no tenant in scope, so a handler cannot quietly use one', async () => {
-      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(true);
-      const interceptor = build(resolverReturning(TENANT));
+      const interceptor = build(resolverReturning(RESOLVED));
 
       let seen: unknown = 'unset';
+      await firstValueFrom(
+        interceptor.intercept(makeContext(), {
+          handle: () => {
+            seen = getRequestContext()?.tenantId;
+            return of(null);
+          },
+        }),
+      );
+
+      expect(seen).toBeUndefined();
+    });
+
+    it('still puts an authenticated caller in scope', async () => {
+      // The authenticated-but-tenantless case. Without this, the only way to
+      // write "which schools do I belong to" would be to mark it public, which
+      // would remove authentication from a route returning someone's
+      // memberships.
+      const interceptor = build(resolverReturning(null));
+
+      let seen: string | undefined;
+      await firstValueFrom(
+        interceptor.intercept(makeContext({}, 'http', { userId: USER }), {
+          handle: () => {
+            seen = getRequestContext()?.userId;
+            return of(null);
+          },
+        }),
+      );
+
+      expect(seen).toBe(USER);
+    });
+
+    it('opens a context even when nobody is authenticated, with no user in it', async () => {
+      // A public health probe. The context exists so the request id is always
+      // available for logging, but it carries no identity to mistake for one.
+      const interceptor = build(resolverReturning(null));
+
+      let seen: { userId?: string } | undefined;
       await firstValueFrom(
         interceptor.intercept(makeContext(), {
           handle: () => {
@@ -99,13 +151,14 @@ describe('TenantContextInterceptor', () => {
         }),
       );
 
-      expect(seen).toBeUndefined();
+      expect(seen).toBeDefined();
+      expect(seen?.userId).toBeUndefined();
     });
   });
 
   describe('when a tenant resolves', () => {
     it('puts it in scope for the handler', async () => {
-      const interceptor = build(resolverReturning(TENANT));
+      const interceptor = build(resolverReturning(RESOLVED));
 
       let seen: string | undefined;
       await firstValueFrom(
@@ -120,8 +173,27 @@ describe('TenantContextInterceptor', () => {
       expect(seen).toBe(TENANT);
     });
 
+    it('carries the user and the role from the membership, not from the token', async () => {
+      // Decision 17A. The resolver reads both from our own rows, so what lands
+      // in the context is what the database said, not what a token claimed.
+      const interceptor = build(resolverReturning(RESOLVED));
+
+      let seen: { userId?: string; role?: string } | undefined;
+      await firstValueFrom(
+        interceptor.intercept(makeContext(), {
+          handle: () => {
+            seen = getRequestContext();
+            return of(null);
+          },
+        }),
+      );
+
+      expect(seen?.userId).toBe(USER);
+      expect(seen?.role).toBe('TEACHER');
+    });
+
     it('does not leave the context in scope afterwards', async () => {
-      const interceptor = build(resolverReturning(TENANT));
+      const interceptor = build(resolverReturning(RESOLVED));
 
       await firstValueFrom(interceptor.intercept(makeContext(), nextReturning(null)));
 
@@ -129,7 +201,7 @@ describe('TenantContextInterceptor', () => {
     });
 
     it('carries an incoming request id so logs correlate', async () => {
-      const interceptor = build(resolverReturning(TENANT));
+      const interceptor = build(resolverReturning(RESOLVED));
 
       let seen: string | undefined;
       await firstValueFrom(
@@ -145,7 +217,7 @@ describe('TenantContextInterceptor', () => {
     });
 
     it('generates a request id when the caller sends none', async () => {
-      const interceptor = build(resolverReturning(TENANT));
+      const interceptor = build(resolverReturning(RESOLVED));
 
       let seen: string | undefined;
       await firstValueFrom(
@@ -165,12 +237,12 @@ describe('TenantContextInterceptor', () => {
       // The failure this guards against is the worst kind: request A reading
       // request B's tenant under load, intermittently, with nothing in the
       // logs to explain it.
-      const other = '11111111-2222-4333-8444-555555555555';
+      const other = '22222222-3333-4444-8555-666666666666';
       const seen: string[] = [];
 
       const run = (tenant: string) =>
         firstValueFrom(
-          build(resolverReturning(tenant)).intercept(makeContext(), {
+          build(resolverReturning({ ...RESOLVED, tenantId: tenant })).intercept(makeContext(), {
             handle: () => {
               seen.push(getRequestContext()?.tenantId ?? 'none');
               return of(null);

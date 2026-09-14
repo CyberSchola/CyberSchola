@@ -2,6 +2,7 @@ import { RequestMethod } from '@nestjs/common';
 import { PATH_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
 import type { DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
 
+import { PUBLIC_KEY } from '../../auth/public.decorator';
 import { TENANT_OPTIONAL_KEY } from '../../tenancy/tenant-optional.decorator';
 
 export interface RouteRecord {
@@ -13,6 +14,8 @@ export interface RouteRecord {
   path: string;
   /** True when the handler or its controller carries `@TenantOptional()`. */
   tenantOptional: boolean;
+  /** True when the handler or its controller carries `@Public()`. */
+  isPublic: boolean;
 }
 
 function joinPath(controllerPath: string, handlerPath: string): string {
@@ -82,6 +85,11 @@ export function collectRoutes(
             handler,
             metatype,
           ]) === true,
+        // Read separately from tenantOptional, because they are separate
+        // decisions: a route can need a caller without needing a school.
+        isPublic:
+          reflector.getAllAndOverride<boolean | undefined>(PUBLIC_KEY, [handler, metatype]) ===
+          true,
       });
     }
   }
