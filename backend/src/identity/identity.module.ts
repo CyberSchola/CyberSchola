@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { MeController } from './me.controller';
+import { MembersController } from './members.controller';
+import { MembersService } from './members.service';
+import { Membership } from './membership.entity';
 import { MembershipService } from './membership.service';
 
 /**
@@ -12,8 +16,9 @@ import { MembershipService } from './membership.service';
  * school ids out of band, and the selector would be unusable in practice.
  */
 @Module({
-  controllers: [MeController],
-  providers: [MembershipService],
-  exports: [MembershipService],
+  imports: [TypeOrmModule.forFeature([Membership])],
+  controllers: [MeController, MembersController],
+  providers: [MembershipService, MembersService],
+  exports: [MembershipService, MembersService],
 })
 export class IdentityModule {}
