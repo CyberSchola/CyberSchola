@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 
 import { AuthGuard } from './auth/auth.guard';
+import { PermissionInterceptor } from './auth/permission.interceptor';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor';
@@ -60,7 +61,11 @@ import { TenancyModule } from './tenancy/tenancy.module';
    *    work below happens.
    * 2. TenantContextInterceptor resolves which school the caller is acting in
    *    and opens the one request context.
-   * 3. ResponseInterceptor wraps whatever comes back in the envelope.
+   * 3. PermissionInterceptor decides whether that caller may use this route.
+   *    It runs here rather than as a guard because guards run before every
+   *    interceptor, so the role would not exist yet and would have to be
+   *    resolved a second time.
+   * 4. ResponseInterceptor wraps whatever comes back in the envelope.
    *
    * The guard and the interceptor are deliberately separate: the guard answers
    * "who", the interceptor answers "where", and only the interceptor opens a
@@ -74,6 +79,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: PermissionInterceptor },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     {
