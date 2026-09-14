@@ -11,6 +11,7 @@ import { SYSTEM_MESSAGES } from '../constants/system.messages';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
 import { ApiSuccessResponseDto } from '../common/dto/api-response.dto';
 import { ServiceNotReadyException } from '../common/exceptions/app.exception';
+import { Public } from '../auth/public.decorator';
 import { TenantOptional } from '../tenancy/tenant-optional.decorator';
 import { ReadinessService, type ReadinessReport } from './readiness.service';
 
@@ -65,6 +66,12 @@ class ReadinessResponseDto extends ApiSuccessResponseDto<ReadinessDto> {
  * orchestrator calling them carries no credentials. Marked at the controller
  * level so both probes inherit it.
  */
+// Both, and they are not the same statement. @TenantOptional() says these
+// probes belong to no school; @Public() says they require no caller. A load
+// balancer and a Kubernetes liveness probe hold no token and must never be
+// asked for one: a health check that can fail with 401 is a health check that
+// reports the application as down during an authentication outage.
+@Public()
 @TenantOptional()
 @ApiTags('Health')
 @Controller('health')

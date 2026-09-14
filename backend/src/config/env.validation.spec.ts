@@ -14,6 +14,8 @@ const VALID = {
   DATABASE_SSL: 'false',
   DATABASE_POOL_MAX: '10',
   REDIS_URL: 'redis://localhost:6379',
+  SUPABASE_URL: 'https://project.supabase.co',
+  SUPABASE_JWKS_URL: 'https://project.supabase.co/auth/v1/.well-known/jwks.json',
 } as const;
 
 const withEnv = (overrides: Record<string, unknown> = {}) => ({ ...VALID, ...overrides });
@@ -224,6 +226,36 @@ describe('validateEnv', () => {
       expect(() => validateEnv(withEnv({ REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: value }))).toThrow(
         /REDIS_ALLOW_UNKNOWN_EVICTION_POLICY/,
       );
+    });
+  });
+  describe('Supabase', () => {
+    it.each(['SUPABASE_URL', 'SUPABASE_JWKS_URL'])('requires %s', (name) => {
+      // Required rather than optional. Authentication is not something this
+      // application can run without, and booting into a state where the guard
+      // cannot verify anything is an invitation to disable it "temporarily".
+      const incomplete = withEnv();
+      delete (incomplete as Record<string, unknown>)[name];
+
+      expect(() => validateEnv(incomplete)).toThrow(new RegExp(name));
+    });
+
+    it.each(['SUPABASE_URL', 'SUPABASE_JWKS_URL'])('rejects a plain http %s', (name) => {
+      // A token endpoint reached over http can be rewritten in transit, which
+      // would let an attacker serve their own signing keys.
+      expect(() => validateEnv(withEnv({ [name]: 'http://project.supabase.co' }))).toThrow(
+        new RegExp(name),
+      );
+    });
+
+    it.each(['not-a-url', 'ftp://project.supabase.co', ''])(
+      'rejects %p as SUPABASE_URL',
+      (value) => {
+        expect(() => validateEnv(withEnv({ SUPABASE_URL: value }))).toThrow(/SUPABASE_URL/);
+      },
+    );
+
+    it('accepts a valid pair', () => {
+      expect(validateEnv(withEnv()).SUPABASE_URL).toBe('https://project.supabase.co');
     });
   });
 });
