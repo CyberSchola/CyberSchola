@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { NodeEnv, validateEnv } from './env.validation';
 
 /**
@@ -256,6 +259,58 @@ describe('validateEnv', () => {
 
     it('accepts a valid pair', () => {
       expect(validateEnv(withEnv()).SUPABASE_URL).toBe('https://project.supabase.co');
+    });
+  });
+  describe('.env.example is the backend configuration contract', () => {
+    /**
+     * Variables the example documents but the backend never reads.
+     *
+     * Each one needs a reason, because an undocumented extra is exactly how a
+     * frontend key ends up looking like a backend requirement. This list is
+     * short on purpose and every entry is a decision somebody made.
+     */
+    const DOCUMENTED_BUT_UNREAD: Readonly<Record<string, string>> = {
+      SUPABASE_SECRET_KEY: 'bypasses RLS; kept as a warning, must never reach the request path',
+      LIVEKIT_API_KEY: 'live classes, P5; no code reads it yet',
+      LIVEKIT_API_SECRET: 'live classes, P5; no code reads it yet',
+      LIVEKIT_URL: 'live classes, P5; no code reads it yet',
+      PAYSTACK_SECRET_KEY: 'billing, P7; no code reads it yet',
+      TEST_DATABASE_URL: 'read by the integration harness rather than by the application',
+    };
+
+    const declared = new Set(
+      readFileSync(join(__dirname, '..', '..', '.env.example'), 'utf8')
+        .split('\n')
+        .map((line) => /^([A-Z][A-Z0-9_]*)=/.exec(line.trim())?.[1])
+        .filter((name): name is string => name !== undefined),
+    );
+
+    const validated = Object.keys(validateEnv(withEnv({ DIRECT_URL: VALID.DATABASE_URL })));
+
+    it('documents every variable the application validates', () => {
+      // The failure this prevents: adding a required variable and leaving the
+      // example behind, so following the example produces a process that
+      // refuses to start. DIRECT_URL nearly did this once already.
+      const missing = validated.filter((name) => !declared.has(name));
+
+      expect(missing).toEqual([]);
+    });
+
+    it('explains every variable it documents but does not read', () => {
+      // The failure this prevents is the one review caught: a frontend key
+      // sitting in the backend's example, indistinguishable from a backend
+      // requirement. SUPABASE_PUBLISHABLE_KEY was removed for exactly this.
+      const unexplained = [...declared]
+        .filter((name) => !validated.includes(name))
+        .filter((name) => !(name in DOCUMENTED_BUT_UNREAD));
+
+      expect(unexplained).toEqual([]);
+    });
+
+    it('does not mention SUPABASE_PUBLISHABLE_KEY as a variable', () => {
+      // It is a client-side key. It may appear in a comment explaining its
+      // absence, which is why this checks the declarations rather than the text.
+      expect(declared.has('SUPABASE_PUBLISHABLE_KEY')).toBe(false);
     });
   });
 });
