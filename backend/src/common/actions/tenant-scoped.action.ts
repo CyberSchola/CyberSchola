@@ -7,8 +7,10 @@ import type {
   SelectQueryBuilder,
 } from 'typeorm';
 
+import { toRole } from '../../auth/permission.matrix';
 import type { TenantOwnedEntity } from '../entities/tenant-owned.entity';
-import { requireTenantId } from '../../tenancy/request-context';
+import { getRequestContext, requireTenantId, requireUserId } from '../../tenancy/request-context';
+import type { AccessScope, Actor } from './access-scope';
 
 /**
  * Base for every action that touches school data.
@@ -37,9 +39,41 @@ export abstract class TenantScopedAction<TEntity extends TenantOwnedEntity & Obj
     private readonly entity: new () => TEntity,
   ) {}
 
+  /**
+   * Which rows this caller may see, beyond the tenant boundary.
+   *
+   * Abstract, not optional, so it cannot be forgotten: an action that does not
+   * declare one does not compile. Entities with no row-level rule say so with
+   * `unrestrictedScope()`, which is a decision a reviewer can see rather than
+   * an omission nobody notices.
+   */
+  protected abstract readonly accessScope: AccessScope<TEntity>;
+
   /** The school this action is operating within. Throws outside a context. */
   protected get tenantId(): string {
     return requireTenantId();
+  }
+
+  /**
+   * Who is asking.
+   *
+   * Both fields come from the membership row, resolved once per request. A role
+   * the enum does not recognise is refused rather than defaulted, so adding a
+   * value to the database enum without adding it here denies access instead of
+   * granting something arbitrary.
+   */
+  protected get actor(): Actor {
+    const role = toRole(getRequestContext()?.role);
+
+    if (role === undefined) {
+      throw new Error(
+        'The request context carries no recognised role, so the rows this caller may see ' +
+          'cannot be determined. A role stored in memberships that is missing from the Role ' +
+          'enum will land here.',
+      );
+    }
+
+    return { userId: requireUserId(), role };
   }
 
   /**
@@ -55,6 +89,8 @@ export abstract class TenantScopedAction<TEntity extends TenantOwnedEntity & Obj
 
   /** Finds many rows within the tenant. */
   protected async findScoped(options: FindManyOptions<TEntity> = {}): Promise<TEntity[]> {
+    this.assertScopeExpressible('findScoped');
+
     return this.manager.find(this.entity, {
       ...options,
       where: this.mergeWhere(options.where),
@@ -70,6 +106,8 @@ export abstract class TenantScopedAction<TEntity extends TenantOwnedEntity & Obj
    * to disguise.
    */
   protected async findOneScoped(options: FindOneOptions<TEntity>): Promise<TEntity | null> {
+    this.assertScopeExpressible('findOneScoped');
+
     return this.manager.findOne(this.entity, {
       ...options,
       where: this.mergeWhere(options.where),
@@ -78,6 +116,8 @@ export abstract class TenantScopedAction<TEntity extends TenantOwnedEntity & Obj
 
   /** Counts rows within the tenant. */
   protected async countScoped(options: FindManyOptions<TEntity> = {}): Promise<number> {
+    this.assertScopeExpressible('countScoped');
+
     return this.manager.count(this.entity, {
       ...options,
       where: this.mergeWhere(options.where),
@@ -106,9 +146,35 @@ export abstract class TenantScopedAction<TEntity extends TenantOwnedEntity & Obj
    * subqueries. Decision 13A's access-scope subqueries will compose onto this.
    */
   protected scopedQuery(alias: string): SelectQueryBuilder<TEntity> {
-    return this.manager
+    const query = this.manager
       .createQueryBuilder(this.entity, alias)
       .where(`${alias}.tenantId = :__tenantId`, { __tenantId: this.tenantId });
+
+    // Applied here rather than by each caller. Welding it to the only method
+    // that produces a query builder is the same reasoning as welding the
+    // application grant to apply_tenant_isolation: a step that has to be
+    // remembered separately is a step that will eventually be skipped, and
+    // skipping this one fails silently by returning too much.
+    this.accessScope.restrict(query, alias, this.actor);
+
+    return query;
+  }
+
+  /**
+   * Refuses the find-options read path when the entity has an access scope.
+   *
+   * TypeORM's `where` object cannot carry an `EXISTS`, so there is no way to
+   * apply a scope through `find`. The honest options were to silently return
+   * unscoped rows, or to stop. Stopping is loud, happens the first time the
+   * method is called, and the message says exactly what to use instead.
+   */
+  private assertScopeExpressible(method: string): void {
+    if (!this.accessScope.unrestricted) {
+      throw new Error(
+        `${method} cannot apply this entity's access scope, because a find-options where ` +
+          'clause cannot express one. Use scopedQuery() instead, which applies it.',
+      );
+    }
   }
 
   /**
