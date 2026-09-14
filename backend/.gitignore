@@ -26,3 +26,7 @@ logs/
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Short-lived Supabase access token used for one-off manual verification.
+# Never committed: it is a live credential, even if it expires within the hour.
+.supabase-token
