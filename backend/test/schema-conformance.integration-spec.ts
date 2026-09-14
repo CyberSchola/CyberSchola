@@ -135,6 +135,83 @@ describe('schema conformance', () => {
     });
   });
 
+  describe('tenant-root tables', () => {
+    /**
+     * Tables that other tenant-owned tables point at through `tenant_id`.
+     *
+     * Added after review of BE-A01. The check above finds tables by looking for
+     * a `tenant_id` column, and `tenants` has none: it *is* the tenant, and its
+     * own `id` plays that role. That blind spot is exactly why the table sat
+     * with full DML granted to the application and no policy on it until
+     * authentication made it reachable.
+     *
+     * Rather than name `tenants` here, which would only patch the instance,
+     * this derives the set from the catalog: anything a `tenant_id` foreign key
+     * points at is a tenant root and needs the same protection. A future root
+     * table is caught without anyone remembering to add it.
+     */
+    let rootTables: string[];
+
+    beforeAll(async () => {
+      const rows = await owner.query<TableRow[]>(`
+        SELECT DISTINCT ccu.table_name AS table_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON kcu.constraint_name = tc.constraint_name
+         AND kcu.table_schema = tc.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON ccu.constraint_name = tc.constraint_name
+         AND ccu.table_schema = tc.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema = 'public'
+          AND kcu.column_name = 'tenant_id'
+      `);
+
+      rootTables = rows.map((row) => row.table_name);
+    });
+
+    it('are discovered rather than hard-coded', () => {
+      // Naming tenants here would fix one table. Deriving the set is what makes
+      // the next one impossible to miss.
+      expect(rootTables).toContain('tenants');
+    });
+
+    it('all have row-level security enabled and forced', async () => {
+      const unprotected = await owner.query<TableRow[]>(
+        `
+        SELECT c.relname AS table_name
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relname = ANY($1)
+          AND NOT (c.relrowsecurity AND c.relforcerowsecurity)
+      `,
+        [rootTables],
+      );
+
+      expect(unprotected.map((row) => row.table_name)).toEqual([]);
+    });
+
+    it('all carry at least one policy', async () => {
+      const withoutPolicy = await owner.query<TableRow[]>(
+        `
+        SELECT c.relname AS table_name
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relname = ANY($1)
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_policies p
+             WHERE p.schemaname = 'public' AND p.tablename = c.relname
+          )
+      `,
+        [rootTables],
+      );
+
+      expect(withoutPolicy.map((row) => row.table_name)).toEqual([]);
+    });
+  });
+
   describe('the application role cannot reach an unprotected tenant table', () => {
     it('holds no DML on a tenant-owned table that lacks row-level security', async () => {
       const exposed = await owner.query<TableRow[]>(`
