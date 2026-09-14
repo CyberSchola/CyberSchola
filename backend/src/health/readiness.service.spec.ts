@@ -239,26 +239,40 @@ describe('ReadinessService', () => {
     it('probes both dependencies concurrently, not one after the other', async () => {
       // Sequentially, two dependencies each near the timeout would take twice
       // the timeout, and the orchestrator would give up before we answered.
-      const started: number[] = [];
-      const slow = () =>
+      //
+      // Asserted by ordering rather than by elapsed time. A wall-clock bound
+      // fails on a loaded CI runner for reasons that have nothing to do with
+      // the behaviour, and a flaky test is worse than no test. If the probes
+      // ran in sequence the second would not start until the first resolved,
+      // so "both started before either finished" is the property, stated
+      // directly.
+      const events: string[] = [];
+      const release: Array<() => void> = [];
+
+      const gated = (name: string) => () =>
         new Promise((resolve) => {
-          started.push(Date.now());
-          setTimeout(() => resolve([]), 200);
+          events.push(`${name}:start`);
+          release.push(() => {
+            events.push(`${name}:end`);
+            resolve([]);
+          });
         });
 
       const service = makeService(
-        { query: jest.fn().mockImplementation(slow) },
-        {
-          ping: jest.fn().mockImplementation(() => slow().then(() => 'PONG')),
-        },
+        { query: jest.fn().mockImplementation(gated('db')) },
+        { ping: jest.fn().mockImplementation(() => gated('redis')().then(() => 'PONG')) },
       );
 
-      const began = Date.now();
-      await service.check();
-      const elapsed = Date.now() - began;
+      const pending = service.check();
 
-      expect(started).toHaveLength(2);
-      expect(elapsed).toBeLessThan(380);
+      // Both must already be in flight before either is allowed to finish.
+      await Promise.resolve();
+      expect(events).toEqual(['db:start', 'redis:start']);
+
+      release.forEach((fn) => fn());
+      await pending;
+
+      expect(events.indexOf('redis:start')).toBeLessThan(events.indexOf('db:end'));
     });
 
     it('is ready only when both dependencies are up', async () => {
