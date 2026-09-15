@@ -63,7 +63,9 @@ export class TenantContextInterceptor implements NestInterceptor {
       // tenant-scoped query does not belong on a tenant-optional route.
       const identity = request[VERIFIED_IDENTITY];
 
-      return runWithRequestContext({ userId: identity?.userId, requestId }, () => next.handle());
+      return runWithRequestContext({ origin: 'http', userId: identity?.userId, requestId }, () =>
+        next.handle(),
+      );
     }
 
     return from(this.resolver.resolve(request)).pipe(
@@ -74,6 +76,7 @@ export class TenantContextInterceptor implements NestInterceptor {
 
         return runWithRequestContext(
           {
+            origin: 'http',
             tenantId: resolved.tenantId,
             userId: resolved.userId,
             role: resolved.role,

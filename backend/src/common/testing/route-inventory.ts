@@ -2,7 +2,12 @@ import { RequestMethod } from '@nestjs/common';
 import { PATH_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
 import type { DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
 
+import type { Permission } from '../../auth/permission.matrix';
 import { PUBLIC_KEY } from '../../auth/public.decorator';
+import {
+  NO_PERMISSION_KEY,
+  REQUIRES_PERMISSION_KEY,
+} from '../../auth/requires-permission.decorator';
 import { TENANT_OPTIONAL_KEY } from '../../tenancy/tenant-optional.decorator';
 
 export interface RouteRecord {
@@ -16,6 +21,10 @@ export interface RouteRecord {
   tenantOptional: boolean;
   /** True when the handler or its controller carries `@Public()`. */
   isPublic: boolean;
+  /** The permission the route declares, or undefined when it declares none. */
+  permission?: Permission;
+  /** True when the route carries `@NoPermissionRequired()`. */
+  noPermissionRequired: boolean;
 }
 
 function joinPath(controllerPath: string, handlerPath: string): string {
@@ -90,6 +99,19 @@ export function collectRoutes(
         isPublic:
           reflector.getAllAndOverride<boolean | undefined>(PUBLIC_KEY, [handler, metatype]) ===
           true,
+        // Three independent axes now: whether a caller is needed, whether a
+        // school is needed, and what that caller must be allowed to do. A route
+        // can require any combination, which is why each is read separately
+        // rather than collapsed into one flag.
+        permission: reflector.getAllAndOverride<Permission | undefined>(REQUIRES_PERMISSION_KEY, [
+          handler,
+          metatype,
+        ]),
+        noPermissionRequired:
+          reflector.getAllAndOverride<boolean | undefined>(NO_PERMISSION_KEY, [
+            handler,
+            metatype,
+          ]) === true,
       });
     }
   }
