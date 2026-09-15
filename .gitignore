@@ -89,3 +89,5 @@ google-service-account*.json
 # AWS credentials
 # ---------------------------------------------------------
 .aws/credentials
+# clerk configuration (can include secrets)
+/.clerk/
