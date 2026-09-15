@@ -56,7 +56,13 @@ describe('PermissionInterceptor', () => {
     const interceptor = build(metadata);
 
     return runWithRequestContext(
-      { tenantId: '3f2504e0-4f89-41d3-9a0c-0305e82c3301', userId: 'u', role, requestId: 'r' },
+      {
+        origin: 'http',
+        tenantId: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+        userId: 'u',
+        role,
+        requestId: 'r',
+      },
       () => firstValueFrom(interceptor.intercept(makeContext(), handler)),
     );
   }

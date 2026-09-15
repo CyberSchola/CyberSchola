@@ -49,8 +49,31 @@ export class PermissionInterceptor implements NestInterceptor {
   constructor(private readonly reflector: Reflector) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
-    // A queue or RPC handler has no caller and no route metadata. Without this
-    // every future background job would be refused.
+    // Non-HTTP execution passes through, and this is the one line in the file
+    // most worth being precise about.
+    //
+    // A queue or RPC handler has no route and therefore no route metadata, so
+    // there is nothing here to check. Without this branch every background job
+    // would be refused by the default-deny rule below.
+    //
+    // **Skipping this check grants nothing.** This interceptor is not the
+    // authorization boundary for background work; it is the boundary for HTTP
+    // routes. A job reaches tenant data only through
+    // `JobContextService.runAsMember`, which reads the actor's membership of
+    // the named school and takes the role from that row, and
+    // `TenantScopedAction` throws without a context. So a worker that
+    // "bypassed the permission interceptor" has bypassed a check that never
+    // applied to it, and still cannot read a row.
+    //
+    // The two paths in full:
+    //
+    //     HTTP     authn -> tenant resolution -> route permission
+    //                    -> access scope -> row-level security
+    //     Job      JobContextService.runAsMember (membership verified)
+    //                    -> access scope -> row-level security
+    //
+    // See JobContextService in tenancy/job-context.service.ts for the contract, and
+    // job-authorization-boundary.spec.ts for the test that holds it.
     if (context.getType() !== 'http') {
       return next.handle();
     }

@@ -85,13 +85,15 @@ describe('access scope', () => {
     limit = 50,
     offset = 0,
   ) {
-    return runWithRequestContext({ tenantId, userId, role, requestId: 'test' }, () =>
-      app.transaction(async (manager) => {
-        await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId]);
-        await manager.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+    return runWithRequestContext(
+      { origin: 'http', tenantId, userId, role, requestId: 'test' },
+      () =>
+        app.transaction(async (manager) => {
+          await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId]);
+          await manager.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
 
-        return new ListMembersAction(manager).execute(limit, offset);
-      }),
+          return new ListMembersAction(manager).execute(limit, offset);
+        }),
     );
   }
 

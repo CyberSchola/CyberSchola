@@ -5,6 +5,7 @@ import { TenantContextInterceptor } from './tenant-context.interceptor';
 import { MembershipTenantResolver, TENANT_RESOLVER } from './tenant-resolver';
 import { Tenant } from './tenant.entity';
 import { TenantSetting } from './tenant-settings.entity';
+import { JobContextService } from './job-context.service';
 import { TenantTransactionService } from './tenant-transaction.service';
 
 /**
@@ -27,9 +28,16 @@ import { TenantTransactionService } from './tenant-transaction.service';
   imports: [TypeOrmModule.forFeature([Tenant, TenantSetting])],
   providers: [
     TenantTransactionService,
+    JobContextService,
     TenantContextInterceptor,
     { provide: TENANT_RESOLVER, useClass: MembershipTenantResolver },
   ],
-  exports: [TenantTransactionService, TenantContextInterceptor, TENANT_RESOLVER, TypeOrmModule],
+  exports: [
+    TenantTransactionService,
+    JobContextService,
+    TenantContextInterceptor,
+    TENANT_RESOLVER,
+    TypeOrmModule,
+  ],
 })
 export class TenancyModule {}
