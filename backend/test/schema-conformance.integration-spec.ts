@@ -153,18 +153,19 @@ describe('schema conformance', () => {
     let rootTables: string[];
 
     beforeAll(async () => {
+      // Single-column keys only. Once tables reference each other through
+      // composite keys that include tenant_id (see the next describe block), a
+      // looser query would call every referenced table a root. What makes a
+      // table a root is that tenant_id on its own points at it.
       const rows = await owner.query<TableRow[]>(`
-        SELECT DISTINCT ccu.table_name AS table_name
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu
-          ON kcu.constraint_name = tc.constraint_name
-         AND kcu.table_schema = tc.table_schema
-        JOIN information_schema.constraint_column_usage ccu
-          ON ccu.constraint_name = tc.constraint_name
-         AND ccu.table_schema = tc.table_schema
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-          AND tc.table_schema = 'public'
-          AND kcu.column_name = 'tenant_id'
+        SELECT DISTINCT con.confrelid::regclass::text AS table_name
+        FROM pg_constraint con
+        JOIN pg_attribute a
+          ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
+        WHERE con.contype = 'f'
+          AND con.connamespace = 'public'::regnamespace
+          AND array_length(con.conkey, 1) = 1
+          AND a.attname = 'tenant_id'
       `);
 
       rootTables = rows.map((row) => row.table_name);
@@ -174,6 +175,13 @@ describe('schema conformance', () => {
       // Naming tenants here would fix one table. Deriving the set is what makes
       // the next one impossible to miss.
       expect(rootTables).toContain('tenants');
+    });
+
+    it('does not mistake a table referenced by a composite key for a root', () => {
+      // classes is referenced as (tenant_id, class_id) by enrolments and
+      // assignments. That makes it a tenant-owned table in its own right, not a
+      // root, and the detection has to tell the two apart.
+      expect(rootTables).not.toContain('classes');
     });
 
     it('all have row-level security enabled and forced', async () => {
@@ -209,6 +217,53 @@ describe('schema conformance', () => {
       );
 
       expect(withoutPolicy.map((row) => row.table_name)).toEqual([]);
+    });
+  });
+
+  describe('references between tenant-owned tables', () => {
+    it('always carry the tenant in the foreign key', async () => {
+      // Added with the academic spine, which is the first place tenant-owned
+      // tables reference each other rather than only tenants itself.
+      //
+      // A foreign key check in Postgres runs with the table owner's privileges,
+      // so it does not respect row-level security. With a plain
+      // `class_id REFERENCES classes(id)`, a row acting in one school can point
+      // at a class belonging to another school that it cannot even see: WITH
+      // CHECK validates the new row's own tenant_id and nothing about its target.
+      // Including tenant_id in the key turns that into a foreign key violation.
+      // Verified by probe before the spine was written.
+      const unsafe = await owner.query<Array<{ reference: string }>>(`
+        SELECT con.conrelid::regclass::text || ' -> ' || con.confrelid::regclass::text AS reference
+        FROM pg_constraint con
+        WHERE con.contype = 'f'
+          AND con.connamespace = 'public'::regnamespace
+          AND con.confrelid <> 'tenants'::regclass
+          -- both sides are tenant-owned
+          AND EXISTS (SELECT 1 FROM pg_attribute a
+                       WHERE a.attrelid = con.conrelid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
+          AND EXISTS (SELECT 1 FROM pg_attribute a
+                       WHERE a.attrelid = con.confrelid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
+          -- and the key does not include tenant_id
+          AND NOT EXISTS (
+            SELECT 1 FROM unnest(con.conkey) k
+            JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k
+            WHERE a.attname = 'tenant_id'
+          )
+      `);
+
+      expect(unsafe.map((row) => row.reference)).toEqual([]);
+    });
+
+    it('finds references to check, so the assertion above is not vacuous', async () => {
+      const [row] = await owner.query<Array<{ count: string }>>(`
+        SELECT count(*)::text AS count
+        FROM pg_constraint con
+        WHERE con.contype = 'f'
+          AND con.connamespace = 'public'::regnamespace
+          AND con.confrelid <> 'tenants'::regclass
+      `);
+
+      expect(Number(row?.count)).toBeGreaterThan(0);
     });
   });
 
