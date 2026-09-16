@@ -52,6 +52,12 @@ Twenty decisions were settled before the first commit and they are binding on th
 
 **A tenant-owned table is one that has been through `apply_tenant_isolation`.** That function enables and forces row-level security, creates the policy, and issues the application role's grant, in that order and as one call. The application is granted nothing on new tables by default, so a migration that creates a table with a `tenant_id` column and forgets the call produces a permission error the first time the table is touched, rather than a table every school can read. `test/schema-conformance.integration-spec.ts` fails the build if any table with a `tenant_id` column is missing its policy.
 
+**A reference between two schools' tables carries the school.** Postgres checks a foreign key without row-level security, so a plain `class_id REFERENCES classes(id)` lets one school's row point at another school's class, and nothing in the policies notices. Every foreign key between tenant-owned tables is therefore composite, `(tenant_id, class_id) REFERENCES classes(tenant_id, id)`, which makes a cross-school reference impossible to store. The schema conformance suite fails the build on any that is not.
+
+## Known limitations
+
+**One role per person per school.** A membership carries a single role, and a person has at most one live membership in a school. A teacher whose child attends the same school cannot yet be both teacher and parent there. This is deliberate for now and is settled in the people phase, where parents make it unavoidable. The `students` and `teachers` tables are kept free of any foreign key tied to `memberships.role` so that one membership can later carry several of them without a schema rewrite.
+
 ## Layout
 
 ```
