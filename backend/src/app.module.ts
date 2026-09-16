@@ -14,6 +14,7 @@ import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './identity/identity.module';
+import { PeopleModule } from './people/people.module';
 import { RedisModule } from './redis/redis.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 
@@ -40,6 +41,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     TenancyModule,
     IdentityModule,
     AcademicsModule,
+    PeopleModule,
     HealthModule,
   ],
   /**
