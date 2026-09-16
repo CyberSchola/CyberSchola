@@ -5,7 +5,9 @@ import {
   Role,
   permissionsFor,
   roleHasPermission,
+  rolesHavePermission,
   toRole,
+  toRoles,
 } from './permission.matrix';
 
 /**
@@ -30,6 +32,7 @@ describe('the permission matrix', () => {
       Permission.AcademicRead,
       Permission.AcademicManage,
       Permission.StudentRead,
+      Permission.PeopleManage,
     ],
     [Role.Teacher]: [
       Permission.MembershipRead,
@@ -37,8 +40,18 @@ describe('the permission matrix', () => {
       Permission.AcademicRead,
       Permission.StudentRead,
     ],
-    [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
-    [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
+    [Role.Student]: [
+      Permission.MembershipRead,
+      Permission.SchoolRead,
+      Permission.AcademicRead,
+      Permission.StudentRead,
+    ],
+    [Role.Parent]: [
+      Permission.MembershipRead,
+      Permission.SchoolRead,
+      Permission.AcademicRead,
+      Permission.StudentRead,
+    ],
     [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
   };
 
@@ -72,7 +85,8 @@ describe('the permission matrix', () => {
       (role) =>
         roleHasPermission(role, Permission.MembershipWrite) ||
         roleHasPermission(role, Permission.SchoolUpdate) ||
-        roleHasPermission(role, Permission.AcademicManage),
+        roleHasPermission(role, Permission.AcademicManage) ||
+        roleHasPermission(role, Permission.PeopleManage),
     );
 
     expect(writers).toEqual([Role.SchoolAdmin]);
@@ -127,13 +141,54 @@ describe('the permission matrix', () => {
       expect(roleHasPermission(Role.Teacher, Permission.SchoolUpdate)).toBe(before);
     });
   });
-  it('lets only administrators and teachers read students', () => {
-    // Blueprint section 16 has students seeing only themselves, and section 17
-    // has parents seeing only linked children. Neither is a list of students, so
-    // neither holds this permission; their own views arrive with the people
-    // phase, where the parent relationship exists.
+  it('lets everyone but staff reach the student read path', () => {
+    // Reaching the endpoint is not seeing the school. The student scope narrows
+    // each of these to what blueprint sections 13, 14, 16 and 17 allow: a
+    // teacher's pupils, a parent's linked children, a student themselves. Staff
+    // are kept to their own information by section 18, so they are refused the
+    // route rather than handed an empty list.
     const readers = ROLES.filter((role) => roleHasPermission(role, Permission.StudentRead));
 
-    expect(readers.sort()).toEqual([Role.SchoolAdmin, Role.Teacher].sort());
+    expect(readers.sort()).toEqual(
+      [Role.SchoolAdmin, Role.Teacher, Role.Student, Role.Parent].sort(),
+    );
+  });
+
+  describe('several roles at once', () => {
+    it('grants what any one of them grants', () => {
+      expect(rolesHavePermission([Role.Parent, Role.SchoolAdmin], Permission.PeopleManage)).toBe(
+        true,
+      );
+    });
+
+    it('grants nothing that none of them grants', () => {
+      expect(rolesHavePermission([Role.Parent, Role.Teacher], Permission.PeopleManage)).toBe(false);
+    });
+
+    it('grants nothing for no roles, or for undefined', () => {
+      for (const permission of PERMISSIONS) {
+        expect(rolesHavePermission([], permission)).toBe(false);
+        expect(rolesHavePermission(undefined, permission)).toBe(false);
+      }
+    });
+
+    it('ignores an unknown role beside a known one rather than failing the known one', () => {
+      expect(rolesHavePermission(['SUPER_ADMIN', Role.Teacher], Permission.StudentRead)).toBe(true);
+      expect(rolesHavePermission(['SUPER_ADMIN', Role.Teacher], Permission.PeopleManage)).toBe(
+        false,
+      );
+    });
+  });
+
+  describe('toRoles', () => {
+    it('keeps known roles and drops the rest', () => {
+      expect([...toRoles(['TEACHER', 'SUPER_ADMIN', 'PARENT', 'teacher'])].sort()).toEqual(
+        [Role.Parent, Role.Teacher].sort(),
+      );
+    });
+
+    it('is empty for nothing', () => {
+      expect(toRoles(undefined).size).toBe(0);
+    });
   });
 });

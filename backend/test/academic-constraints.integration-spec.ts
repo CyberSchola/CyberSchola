@@ -1,6 +1,8 @@
 import { DataSource, type QueryRunner } from 'typeorm';
 
+import { Role } from '../src/auth/permission.matrix';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
+import { seedMember } from './people.fixtures';
 
 /**
  * The invariants the academic spine hands to the database.
@@ -80,15 +82,10 @@ describe('academic spine constraints', () => {
       [OTHER_SCHOOL, otherSchoolSession, otherGrade],
     );
 
-    const membership = await ownerInsert(
-      `INSERT INTO memberships (tenant_id, user_id, role)
-       VALUES ($1, '11111111-1111-4111-8111-111111111111', 'STUDENT') RETURNING id`,
-      [SCHOOL],
-    );
-    student = await ownerInsert(
-      `INSERT INTO students (tenant_id, membership_id) VALUES ($1, $2) RETURNING id`,
-      [SCHOOL, membership],
-    );
+    const { roleRows } = await seedMember(owner, SCHOOL, '11111111-1111-4111-8111-111111111111', [
+      Role.Student,
+    ]);
+    student = roleRows[Role.Student]!;
   }, 120_000);
 
   afterAll(async () => {

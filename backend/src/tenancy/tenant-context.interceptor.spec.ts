@@ -11,7 +11,7 @@ import type { ResolvedTenant, TenantResolver } from './tenant-resolver';
 const TENANT = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 const USER = '11111111-2222-4333-8444-555555555555';
 
-const RESOLVED: ResolvedTenant = { tenantId: TENANT, userId: USER, role: 'TEACHER' };
+const RESOLVED: ResolvedTenant = { tenantId: TENANT, userId: USER, roles: ['TEACHER'] };
 
 function makeContext(
   headers: Record<string, string> = {},
@@ -173,12 +173,12 @@ describe('TenantContextInterceptor', () => {
       expect(seen).toBe(TENANT);
     });
 
-    it('carries the user and the role from the membership, not from the token', async () => {
+    it('carries the user and the roles from the membership, not from the token', async () => {
       // Decision 17A. The resolver reads both from our own rows, so what lands
       // in the context is what the database said, not what a token claimed.
       const interceptor = build(resolverReturning(RESOLVED));
 
-      let seen: { userId?: string; role?: string } | undefined;
+      let seen: { userId?: string; roles?: readonly string[] } | undefined;
       await firstValueFrom(
         interceptor.intercept(makeContext(), {
           handle: () => {
@@ -189,7 +189,7 @@ describe('TenantContextInterceptor', () => {
       );
 
       expect(seen?.userId).toBe(USER);
-      expect(seen?.role).toBe('TEACHER');
+      expect(seen?.roles).toEqual(['TEACHER']);
     });
 
     it('does not leave the context in scope afterwards', async () => {

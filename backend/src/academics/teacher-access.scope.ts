@@ -1,8 +1,4 @@
-import type { ObjectLiteral } from 'typeorm';
-
-import { Role } from '../auth/permission.matrix';
-import { type AccessScope, scopeFor } from '../common/actions/access-scope';
-import type { Student } from './entities/student.entity';
+import type { Actor, ScopeFragment } from '../common/actions/access-scope';
 
 /** Bound once per query. The name is namespaced so it cannot collide with a caller's. */
 const ACTOR_PARAM = '__teacherScopeActorUserId';
@@ -53,11 +49,8 @@ function heldByActor(teacherIdSql: string): string {
      AND tas_membership.user_id = :${ACTOR_PARAM}`;
 }
 
-function forStudent(studentIdSql: string): string {
-  return `
-    WHERE tas_enrolment.student_id = ${studentIdSql}
-      AND tas_enrolment.deleted_at IS NULL`;
-}
+/** Live enrolments only. */
+const LIVE_ENROLMENT = 'WHERE tas_enrolment.deleted_at IS NULL';
 
 /**
  * Whether the acting teacher may reach a student.
@@ -68,92 +61,69 @@ function forStudent(studentIdSql: string): string {
  * it cannot drift from this one. Attendance, results and lesson notes will each
  * compose it against their own `student_id` column.
  *
- * ## Three EXISTS, joined by OR at the top
+ * ## One set of students, computed once
  *
- * One per way a teacher can reach a student:
+ * A student is reachable through any of three routes:
  *
- * 1. supervises the student's current class
- * 2. teaches a core subject in that class, which every enrolled student takes
- * 3. teaches an elective in that class that this student registered for
+ * 1. the teacher supervises the student's current class
+ * 2. the teacher teaches a core subject in that class, which every enrolled
+ *    student takes
+ * 3. the teacher teaches an elective in that class that this student registered
+ *    for
  *
- * Kept as three separate subqueries rather than one EXISTS over a UNION, so each
- * is small enough to use its own index and Postgres stops at the first branch
- * that matches. A UNION would build the whole set before testing it.
+ * The three are a UNION of student ids, tested with `IN`. The subquery does not
+ * refer to the outer row, so Postgres evaluates it once per query and hashes the
+ * result, however many rows are being filtered. An earlier version wrote each
+ * route as an `EXISTS` correlated with the outer row, which reads naturally and
+ * measured at 1.46 seconds for a teacher's first page on a 2,000-student school,
+ * because all three subqueries, with their joins, ran again for every student.
+ * The set form measures in single-digit milliseconds on the same data.
  *
- * The elective branch checks the registration against the subject **and** the
- * student's own class. A registration pointing at an elective in some other
- * class must not grant anything, and joining through the enrolment is what makes
- * that impossible rather than merely unlikely.
+ * The elective route joins the registration to the student's own enrolment, not
+ * just to the subject. A registration pointing at an elective in some other class
+ * must not grant anything, and joining through the enrolment is what makes that
+ * impossible rather than merely unlikely.
  *
- * Returns a SQL predicate. Row-level security still applies to every table it
- * reads, so it can only ever match within the current school; this narrows
- * further, to the students one teacher is allowed to see.
+ * Returns a scope fragment: the predicate and the parameter it binds. Row-level
+ * security still applies to every table it reads, so it can only ever match
+ * within the current school; this narrows further, to the students one teacher
+ * is allowed to see. It is the TEACHER branch of the student scope in the people
+ * module, which ORs it with the parent and self branches.
  *
  * @param studentIdSql An expression evaluating to the student id to test, such
  *   as `student.id` or `attendance.student_id`.
  */
-export function teacherCanReachStudent(studentIdSql: string): string {
+export function teacherReachesStudent(studentIdSql: string, actor: Actor): ScopeFragment {
   const enrolment = currentEnrolment();
-  const student = forStudent(studentIdSql);
 
-  return `(
-    EXISTS (
-      SELECT 1 ${enrolment}
+  const sql = `${studentIdSql} IN (
+      SELECT tas_enrolment.student_id ${enrolment}
       JOIN class_supervisors tas_supervisor
         ON tas_supervisor.class_id = tas_class.id
        AND tas_supervisor.deleted_at IS NULL
       ${heldByActor('tas_supervisor.teacher_id')}
-      ${student}
-    )
-    OR EXISTS (
-      SELECT 1 ${enrolment}
+      ${LIVE_ENROLMENT}
+    UNION
+      SELECT tas_enrolment.student_id ${enrolment}
       JOIN class_subjects tas_subject
         ON tas_subject.class_id = tas_class.id
        AND tas_subject.deleted_at IS NULL
        AND NOT tas_subject.is_elective
       ${heldByActor('tas_subject.teacher_id')}
-      ${student}
-    )
-    OR EXISTS (
-      SELECT 1 ${enrolment}
+      ${LIVE_ENROLMENT}
+    UNION
+      SELECT tas_enrolment.student_id ${enrolment}
       JOIN class_subjects tas_subject
         ON tas_subject.class_id = tas_class.id
        AND tas_subject.deleted_at IS NULL
        AND tas_subject.is_elective
       JOIN elective_registrations tas_registration
         ON tas_registration.class_subject_id = tas_subject.id
-       AND tas_registration.student_id = ${studentIdSql}
+       AND tas_registration.student_id = tas_enrolment.student_id
        AND tas_registration.deleted_at IS NULL
       ${heldByActor('tas_subject.teacher_id')}
-      ${student}
-    )
+      ${LIVE_ENROLMENT}
   )`;
-}
 
-/**
- * The teacher rule as an access scope, for any entity with a student id.
- *
- * A school administrator sees every student in the school. Everyone else is
- * narrowed by the rule above, which fails closed for anyone who is not a
- * teacher: a student or parent who somehow reached a student list would match
- * no branch, because they hold no supervision or subject assignment.
- *
- * @param studentIdColumn The entity property holding the student id, such as
- *   `id` for Student or `studentId` for a future Attendance. TypeORM resolves
- *   `alias.property` to the real column, so this is the property name rather
- *   than the database column name.
- */
-export function teacherAccessScope<TEntity extends ObjectLiteral>(
-  studentIdColumn: string,
-): AccessScope<TEntity> {
-  return scopeFor<TEntity>({
-    unrestrictedRoles: [Role.SchoolAdmin],
-    narrow: (query, alias, actor) =>
-      void query.andWhere(teacherCanReachStudent(`${alias}.${studentIdColumn}`), {
-        [ACTOR_PARAM]: actor.userId,
-      }),
-  });
+  return { sql, params: { [ACTOR_PARAM]: actor.userId } };
 }
-
-/** The scope for the students table itself. */
-export const studentAccessScope = (): AccessScope<Student> => teacherAccessScope<Student>('id');

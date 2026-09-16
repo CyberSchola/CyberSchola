@@ -1,5 +1,10 @@
 /**
- * Roles a membership can carry.
+ * Roles a person can hold in a school.
+ *
+ * A person may hold several at once: a teacher whose child attends the same
+ * school is a teacher and a parent on one membership. Each role is a row in its
+ * own table (see `ROLE_TABLES` in the people module), and `membership_roles`
+ * reads them back.
  *
  * Mirrors the `memberships_role_enum` type in migration 1757500000000. The two
  * are kept in step by a test that reads the database enum and compares, rather
@@ -51,10 +56,16 @@ export enum Permission {
   /**
    * See students. Which ones is the access scope's question: an administrator
    * sees the whole school, a teacher sees only the students blueprint sections
-   * 13 and 14 allow, meaning those in a class they supervise or taking a subject
-   * they teach.
+   * 13 and 14 allow, a parent sees their own children (section 17), and a
+   * student sees themselves (section 16).
    */
   StudentRead = 'student.read',
+  /**
+   * Create, update and remove the people of a school, link a login to a person's
+   * record, and manage which parents are linked to which children. Blueprint
+   * section 12 puts people management under the administrator.
+   */
+  PeopleManage = 'people.manage',
 }
 
 /**
@@ -87,6 +98,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.AcademicRead,
     Permission.AcademicManage,
     Permission.StudentRead,
+    Permission.PeopleManage,
   ],
   [Role.Teacher]: [
     Permission.MembershipRead,
@@ -94,8 +106,18 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.AcademicRead,
     Permission.StudentRead,
   ],
-  [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
-  [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
+  [Role.Student]: [
+    Permission.MembershipRead,
+    Permission.SchoolRead,
+    Permission.AcademicRead,
+    Permission.StudentRead,
+  ],
+  [Role.Parent]: [
+    Permission.MembershipRead,
+    Permission.SchoolRead,
+    Permission.AcademicRead,
+    Permission.StudentRead,
+  ],
   [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
 });
 
@@ -116,14 +138,35 @@ export const PERMISSIONS: readonly Permission[] = Object.values(Permission);
 /**
  * Narrows a role string from the database to a known role, or undefined.
  *
- * Fails closed by construction. A value stored in `memberships.role` that this
- * enum does not know about, which is what a migration adding an enum value
- * without updating this file would produce, resolves to undefined and therefore
- * to no permissions at all. The alternative, treating an unrecognised role as
+ * Fails closed by construction. A value the database holds that this enum does
+ * not know about, which is what a migration adding an enum value without
+ * updating this file would produce, resolves to undefined and therefore to no
+ * permissions at all. The alternative, treating an unrecognised role as
  * ordinary, would grant it whatever the default happened to be.
  */
 export function toRole(value: string | undefined): Role | undefined {
   return ROLES.find((role) => role === value);
+}
+
+/**
+ * The known roles among a list read from the database.
+ *
+ * Unknown values are dropped rather than rejected, for the reason above: each
+ * one grants nothing. A person holding one known role and one unknown keeps what
+ * the known role allows and nothing more.
+ */
+export function toRoles(values: readonly string[] | undefined): ReadonlySet<Role> {
+  const known = new Set<Role>();
+
+  for (const value of values ?? []) {
+    const role = toRole(value);
+
+    if (role !== undefined) {
+      known.add(role);
+    }
+  }
+
+  return known;
 }
 
 /**
@@ -135,6 +178,20 @@ export function roleHasPermission(role: string | undefined, permission: Permissi
   const known = toRole(role);
 
   return known === undefined ? false : (PERMISSIONS_BY_ROLE.get(known)?.has(permission) ?? false);
+}
+
+/**
+ * Whether any of a person's roles holds a permission.
+ *
+ * The union, deliberately. A teacher who is also a parent may do what either role
+ * may do; what they may *see* is then narrowed by the access scope, which is
+ * also an OR across their roles. No roles at all holds nothing.
+ */
+export function rolesHavePermission(
+  roles: readonly string[] | undefined,
+  permission: Permission,
+): boolean {
+  return (roles ?? []).some((role) => roleHasPermission(role, permission));
 }
 
 /**

@@ -18,8 +18,12 @@ export class SchoolMembershipDto {
   @ApiProperty({ example: 'greenfield-academy' })
   slug!: string;
 
-  @ApiProperty({ enum: ['SCHOOL_ADMIN', 'TEACHER', 'STUDENT', 'PARENT', 'STAFF'] })
-  role!: string;
+  @ApiProperty({
+    enum: ['SCHOOL_ADMIN', 'TEACHER', 'STUDENT', 'PARENT', 'STAFF'],
+    isArray: true,
+    description: 'Every role held in that school. A teacher who is also a parent has both.',
+  })
+  roles!: string[];
 }
 
 class SchoolMembershipsResponseDto extends ApiSuccessResponseDto<SchoolMembershipDto[]> {

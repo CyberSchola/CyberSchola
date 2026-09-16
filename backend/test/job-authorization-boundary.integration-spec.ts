@@ -11,6 +11,7 @@ import { getRequestContext, runInJobContext } from '../src/tenancy/request-conte
 import { JobContextService } from '../src/tenancy/job-context.service';
 import { TenantTransactionService } from '../src/tenancy/tenant-transaction.service';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
+import { seedMember } from './people.fixtures';
 
 /**
  * The authorization boundary for work that is not an HTTP request.
@@ -74,13 +75,9 @@ describe('the job authorization boundary', () => {
     `);
     [school, otherSchool] = rows.map((row) => row.id) as [string, string];
 
-    await owner.query(
-      `INSERT INTO memberships (tenant_id, user_id, role) VALUES
-         ($1, $2, 'SCHOOL_ADMIN'),
-         ($1, $3, 'TEACHER'),
-         ($4, $5, 'SCHOOL_ADMIN')`,
-      [school, admin, teacher, otherSchool, outsider],
-    );
+    await seedMember(owner, school, admin, [Role.SchoolAdmin]);
+    await seedMember(owner, school, teacher, [Role.Teacher]);
+    await seedMember(owner, otherSchool, outsider, [Role.SchoolAdmin]);
   }, 120_000);
 
   afterAll(async () => {
@@ -176,7 +173,7 @@ describe('the job authorization boundary', () => {
           jobName: 'nightly-roster-export',
           tenantId: school,
           userId: admin,
-          role: Role.SchoolAdmin,
+          roles: [Role.SchoolAdmin],
         },
         () => listMembers(school, admin),
       );
@@ -189,7 +186,7 @@ describe('the job authorization boundary', () => {
       // property that stops "run it in a worker" becoming a way around the
       // access scope.
       const page = await runInJobContext(
-        { jobName: 'teacher-digest', tenantId: school, userId: teacher, role: Role.Teacher },
+        { jobName: 'teacher-digest', tenantId: school, userId: teacher, roles: [Role.Teacher] },
         () => listMembers(school, teacher),
       );
 
@@ -210,15 +207,27 @@ describe('the job authorization boundary', () => {
       ).rejects.toThrow(/no live membership/i);
     });
 
-    it('takes the role from the membership rather than from the caller', async () => {
-      // A job cannot claim to be an administrator. The role is read off the row,
-      // so a teacher's job is scoped as a teacher no matter what it asks for.
+    it('takes the roles from the role rows rather than from the caller', async () => {
+      // A job cannot claim to be an administrator. The roles are read off the
+      // membership's role rows, so a teacher's job is scoped as a teacher no
+      // matter what it asks for.
       const seen = await jobs.runAsMember(
         { jobName: 'teacher-digest', tenantId: school, userId: teacher },
-        () => Promise.resolve(getRequestContext()?.role),
+        () => Promise.resolve(getRequestContext()?.roles),
       );
 
-      expect(seen).toBe(Role.Teacher);
+      expect(seen).toEqual([Role.Teacher]);
+    });
+
+    it('refuses an actor who belongs to the school but holds no role there', async () => {
+      const roleless = '66666666-6666-4666-8666-666666666666';
+      await seedMember(owner, school, roleless, []);
+
+      await expect(
+        jobs.runAsMember({ jobName: 'orphan-job', tenantId: school, userId: roleless }, () =>
+          Promise.resolve('should not run'),
+        ),
+      ).rejects.toThrow(/holds no role/i);
     });
 
     it('scopes a verified job exactly as a request would be scoped', async () => {
@@ -237,7 +246,7 @@ describe('the job authorization boundary', () => {
           jobName: 'nightly-roster-export',
           tenantId: school,
           userId: admin,
-          role: Role.SchoolAdmin,
+          roles: [Role.SchoolAdmin],
         },
         () => getRequestContext(),
       );
@@ -252,7 +261,7 @@ describe('the job authorization boundary', () => {
           jobName: 'nightly-roster-export',
           tenantId: school,
           userId: admin,
-          role: Role.SchoolAdmin,
+          roles: [Role.SchoolAdmin],
         },
         () => undefined,
       );
@@ -266,7 +275,7 @@ describe('the job authorization boundary', () => {
       jobName: 'job',
       tenantId: '11111111-2222-4333-8444-555555555555',
       userId: '22222222-3333-4444-8555-666666666666',
-      role: Role.Teacher,
+      roles: [Role.Teacher],
     };
 
     it('refuses an unnamed job', () => {
@@ -283,12 +292,19 @@ describe('the job authorization boundary', () => {
       expect(() => runInJobContext({ ...valid, userId }, () => undefined)).toThrow(/user id/i);
     });
 
-    it('refuses a role the matrix does not recognise', () => {
-      // Fails closed exactly as the request path does. A job must not be the
-      // route by which an unknown role gets in.
+    it('refuses a role the matrix does not recognise, even beside a known one', () => {
+      // Fails closed. A job must not be the route by which an unknown role gets
+      // in, and a job naming its roles is trusted code that should name real ones.
       expect(() =>
-        runInJobContext({ ...valid, role: 'SUPER_ADMIN' as Role }, () => undefined),
-      ).toThrow(/unrecognised role/i);
+        runInJobContext(
+          { ...valid, roles: [Role.Teacher, 'SUPER_ADMIN' as Role] },
+          () => undefined,
+        ),
+      ).toThrow(/roles/i);
+    });
+
+    it('refuses a job with no roles', () => {
+      expect(() => runInJobContext({ ...valid, roles: [] }, () => undefined)).toThrow(/roles/i);
     });
   });
 });

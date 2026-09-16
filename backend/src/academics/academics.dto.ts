@@ -111,15 +111,6 @@ export class CreateSubjectDto {
 }
 
 /** Anchors an existing membership as a student or a teacher. */
-export class CreatePersonAnchorDto {
-  @ApiProperty({
-    format: 'uuid',
-    description: 'The membership to anchor. Its role must match what is being created.',
-  })
-  @IsUUID('4')
-  membershipId!: string;
-}
-
 export class CreateClassSupervisorDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID('4')
@@ -223,11 +214,6 @@ export class SubjectDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: 'Mathematics' }) name!: string;
   @ApiProperty({ nullable: true, example: 'MTH' }) code!: string | null;
-}
-
-export class PersonAnchorDto {
-  @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty({ format: 'uuid' }) membershipId!: string;
 }
 
 export class ClassSupervisorDto {

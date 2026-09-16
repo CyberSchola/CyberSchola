@@ -1,13 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 
-import { toRole, type Role } from '../auth/permission.matrix';
+import { toRoles, type Role } from '../auth/permission.matrix';
 
 /**
  * Everything security-relevant about the caller, resolved once per request.
  *
  * Blueprint rule 24: none of this is ever read from a request body or a query
- * string. `tenantId` and `role` come from a membership lookup against our own
+ * string. `tenantId` and `roles` come from a membership lookup against our own
  * tables, and the token supplies only an identity to look up.
  *
  * `tenantId` is optional, and that is not laxity. There is a real and narrow
@@ -31,8 +31,14 @@ export interface RequestContext {
   readonly tenantId?: string;
   /** Who is acting, from a verified token subject, or the actor a job runs as. */
   readonly userId?: string;
-  /** The caller's role in this school, from the membership row. */
-  readonly role?: string;
+  /**
+   * The caller's roles in this school, from the role rows on their membership.
+   *
+   * Several, not one: a teacher whose child attends the school holds TEACHER and
+   * PARENT. Empty is possible and grants nothing: a person can belong to a school
+   * before an administrator gives them any role there.
+   */
+  readonly roles?: readonly string[];
   /** Correlates log lines for one request. */
   readonly requestId: string;
   /** For a job context, what work it is. Absent on an HTTP request. */
@@ -68,11 +74,11 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
  * Opens a context for trusted background work.
  *
  * **Prefer `JobContextService.runAsMember`.** This is the low-level primitive
- * and it takes the role on trust, which means a caller supplying one has
- * asserted it rather than proved it. A test caught what that allows: a job
+ * and it takes the roles on trust, which means a caller supplying them has
+ * asserted them rather than proved them. A test caught what that allows: a job
  * naming any school could read it, because nothing checked its actor belonged
- * there. `JobContextService` reads the membership first and takes the role off
- * that row, which is the same selection-not-assertion rule the HTTP resolver
+ * there. `JobContextService` reads the membership first and takes the roles off
+ * its role rows, which is the same selection-not-assertion rule the HTTP resolver
  * follows. Call this directly only where the membership is already established.
  *
  * ## The security boundary this exists to draw
@@ -98,11 +104,11 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
  * background work.** It skips non-HTTP execution because it has nothing to read,
  * and skipping it grants nothing, because a job that has not opened a context
  * here cannot reach tenant data at all. `TenantScopedAction` demands a tenant
- * and a recognised role from the context and throws without them, so the
+ * and an actor from the context and throws without them, so the
  * failure is a thrown error rather than an unscoped query.
  *
  * A job therefore has to say who it is acting as, in the same terms a request
- * would: a school, an actor, and a role. It gains nothing by being a job. What
+ * would: a school, an actor, and their roles. It gains nothing by being a job. What
  * it does gain is a recorded reason, in `jobName`, so an audit can tell a
  * scheduled report apart from a person.
  *
@@ -122,8 +128,8 @@ export function runInJobContext<T>(
     readonly tenantId: string;
     /** The person the job acts as. Jobs act as somebody, never as nobody. */
     readonly userId: string;
-    /** Their role, which the access scope will narrow by. */
-    readonly role: Role;
+    /** Their roles, which the access scope will narrow by. */
+    readonly roles: readonly Role[];
   },
   work: () => T,
 ): T {
@@ -139,12 +145,16 @@ export function runInJobContext<T>(
     throw new Error('Refusing to open a job context for a non-uuid user id.');
   }
 
-  if (toRole(job.role) === undefined) {
-    // Fails closed on a role the matrix does not know, exactly as the request
-    // path does. A job must not be the way an unrecognised role gets in.
+  const known = toRoles(job.roles);
+
+  if (known.size === 0 || known.size !== new Set(job.roles).size) {
+    // Fails closed on a role the matrix does not know, and on no roles at all. A
+    // job must not be the way an unrecognised role gets in, and a job acting as
+    // somebody with no role could only ever see nothing, which is a bug to
+    // surface rather than a job to run.
     throw new Error(
-      `Refusing to open a job context with the unrecognised role "${job.role}". ` +
-        'Jobs act as a known role so the access scope can narrow their reads.',
+      `Refusing to open a job context with the roles [${job.roles.join(', ')}]. ` +
+        'Jobs act as at least one known role so the access scope can narrow their reads.',
     );
   }
 
@@ -154,7 +164,7 @@ export function runInJobContext<T>(
       jobName: job.jobName,
       tenantId: job.tenantId,
       userId: job.userId,
-      role: job.role,
+      roles: [...known],
       requestId: randomUUID(),
     },
     work,

@@ -1,14 +1,9 @@
-import { Body, Controller, Get, HttpStatus, Post, Query } from '@nestjs/common';
+import { Body, Controller, HttpStatus, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Permission } from '../auth/permission.matrix';
 import { RequiresPermission } from '../auth/requires-permission.decorator';
-import { type Page, PaginationQueryDto, toPageRequest } from '../common/pagination/pagination';
-import {
-  ApiErrorResponse,
-  ApiItemResponse,
-  ApiPageResponse,
-} from '../common/swagger/api-responses';
+import { ApiErrorResponse, ApiItemResponse } from '../common/swagger/api-responses';
 import {
   ClassEnrolmentDto,
   ClassSubjectDto,
@@ -17,9 +12,7 @@ import {
   CreateClassSubjectDto,
   CreateClassSupervisorDto,
   CreateElectiveRegistrationDto,
-  CreatePersonAnchorDto,
   ElectiveRegistrationDto,
-  PersonAnchorDto,
 } from './academics.dto';
 import { AcademicsService } from './academics.service';
 
@@ -28,66 +21,13 @@ import { AcademicsService } from './academics.service';
  *
  * These are the facts the teacher access rule reads: who supervises a class, who
  * teaches what, which students are enrolled where, and who registered for which
- * elective. Only an administrator may record them.
- *
- * `GET /students` is the exception, and the reason this controller exists at all
- * as a place to see the rule work. It is scoped: an administrator sees the whole
- * school, a teacher sees only the students blueprint sections 13 and 14 allow.
+ * elective. Only an administrator may record them. The people themselves, and
+ * the scoped student list, live in the people module.
  */
 @ApiTags('Academics')
 @Controller()
-export class PeopleAssignmentsController {
+export class AssignmentsController {
   constructor(private readonly academics: AcademicsService) {}
-
-  @Get('students')
-  @RequiresPermission(Permission.StudentRead)
-  @ApiOperation({
-    summary: 'Students this caller may see',
-    description:
-      'An administrator sees every student in the school. A teacher sees only students in a ' +
-      'class they supervise this session, or taking a subject they teach, with electives ' +
-      'counted only for registered students. The total follows the same scope.',
-  })
-  @ApiPageResponse(PersonAnchorDto, 'Students retrieved.')
-  listStudents(@Query() query: PaginationQueryDto): Promise<Page<PersonAnchorDto>> {
-    return this.academics.listStudents(toPageRequest(query));
-  }
-
-  @Post('students')
-  @RequiresPermission(Permission.AcademicManage)
-  @ApiOperation({
-    summary: 'Anchor a membership as a student',
-    description: 'The membership must hold the STUDENT role (422 otherwise).',
-  })
-  @ApiItemResponse(PersonAnchorDto, 'Student created.', HttpStatus.CREATED)
-  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
-  @ApiErrorResponse(HttpStatus.NOT_FOUND, 'No membership with this id in this school.')
-  @ApiErrorResponse(HttpStatus.CONFLICT, 'This membership is already a student.')
-  @ApiErrorResponse(
-    HttpStatus.UNPROCESSABLE_ENTITY,
-    'The membership does not hold the STUDENT role.',
-  )
-  createStudent(@Body() input: CreatePersonAnchorDto): Promise<PersonAnchorDto> {
-    return this.academics.createStudent(input.membershipId);
-  }
-
-  @Post('teachers')
-  @RequiresPermission(Permission.AcademicManage)
-  @ApiOperation({
-    summary: 'Anchor a membership as a teacher',
-    description: 'The membership must hold the TEACHER role (422 otherwise).',
-  })
-  @ApiItemResponse(PersonAnchorDto, 'Teacher created.', HttpStatus.CREATED)
-  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
-  @ApiErrorResponse(HttpStatus.NOT_FOUND, 'No membership with this id in this school.')
-  @ApiErrorResponse(HttpStatus.CONFLICT, 'This membership is already a teacher.')
-  @ApiErrorResponse(
-    HttpStatus.UNPROCESSABLE_ENTITY,
-    'The membership does not hold the TEACHER role.',
-  )
-  createTeacher(@Body() input: CreatePersonAnchorDto): Promise<PersonAnchorDto> {
-    return this.academics.createTeacher(input.membershipId);
-  }
 
   @Post('class-supervisors')
   @RequiresPermission(Permission.AcademicManage)

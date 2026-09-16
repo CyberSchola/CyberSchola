@@ -15,8 +15,12 @@ export class MemberDto {
   @ApiProperty({ format: 'uuid', description: 'The Supabase subject for this person.' })
   userId!: string;
 
-  @ApiProperty({ enum: ['SCHOOL_ADMIN', 'TEACHER', 'STUDENT', 'PARENT', 'STAFF'] })
-  role!: string;
+  @ApiProperty({
+    enum: ['SCHOOL_ADMIN', 'TEACHER', 'STUDENT', 'PARENT', 'STAFF'],
+    isArray: true,
+    description: 'Every role this person holds in the school. Empty until one is granted.',
+  })
+  roles!: string[];
 
   @ApiProperty({ enum: ['ACTIVE', 'SUSPENDED'] })
   status!: string;
@@ -98,7 +102,7 @@ function toDto(member: MemberSummary): MemberDto {
   return {
     id: member.id,
     userId: member.userId,
-    role: member.role,
+    roles: member.roles,
     status: member.status,
   };
 }

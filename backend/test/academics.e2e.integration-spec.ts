@@ -13,8 +13,10 @@ import { DataSource } from 'typeorm';
 import * as supertestModule from 'supertest';
 
 import { AppModule } from '../src/app.module';
+import { Role } from '../src/auth/permission.matrix';
 import { SupabaseTokenVerifier } from '../src/auth/token-verifier';
 import { createTestDataSource, resetSchema } from './database.setup';
+import { seedMember } from './people.fixtures';
 
 type SupertestFn = typeof supertestModule;
 const maybeWrapped = supertestModule as unknown as { default?: SupertestFn };
@@ -111,35 +113,20 @@ describe('academics end to end', () => {
       [SCHOOL, OTHER_SCHOOL],
     );
 
-    const membership = (tenant: string, userId: string, role: string) =>
-      ownerInsert(
-        `INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, $3) RETURNING id`,
-        [tenant, userId, role],
-      );
-
-    await membership(SCHOOL, users.admin, 'SCHOOL_ADMIN');
-    const teacherMembership = await membership(SCHOOL, users.teacher, 'TEACHER');
-    const idleMembership = await membership(SCHOOL, users.idleTeacher, 'TEACHER');
-    const studentMembership = await membership(SCHOOL, users.student, 'STUDENT');
-    const otherStudentMembership = await membership(SCHOOL, users.otherStudent, 'STUDENT');
-    await membership(OTHER_SCHOOL, users.otherSchoolAdmin, 'SCHOOL_ADMIN');
-
-    const teacher = await ownerInsert(
-      `INSERT INTO teachers (tenant_id, membership_id) VALUES ($1, $2) RETURNING id`,
-      [SCHOOL, teacherMembership],
-    );
-    await ownerInsert(
-      `INSERT INTO teachers (tenant_id, membership_id) VALUES ($1, $2) RETURNING id`,
-      [SCHOOL, idleMembership],
-    );
-    studentIds.student = await ownerInsert(
-      `INSERT INTO students (tenant_id, membership_id) VALUES ($1, $2) RETURNING id`,
-      [SCHOOL, studentMembership],
-    );
-    studentIds.otherStudent = await ownerInsert(
-      `INSERT INTO students (tenant_id, membership_id) VALUES ($1, $2) RETURNING id`,
-      [SCHOOL, otherStudentMembership],
-    );
+    // A role is the role row on a membership, so seeding "a teacher" means a
+    // membership plus a teachers row.
+    await seedMember(owner, SCHOOL, users.admin, [Role.SchoolAdmin]);
+    const teacher = (await seedMember(owner, SCHOOL, users.teacher, [Role.Teacher])).roleRows[
+      Role.Teacher
+    ]!;
+    await seedMember(owner, SCHOOL, users.idleTeacher, [Role.Teacher]);
+    studentIds.student = (await seedMember(owner, SCHOOL, users.student, [Role.Student])).roleRows[
+      Role.Student
+    ]!;
+    studentIds.otherStudent = (
+      await seedMember(owner, SCHOOL, users.otherStudent, [Role.Student])
+    ).roleRows[Role.Student]!;
+    await seedMember(owner, OTHER_SCHOOL, users.otherSchoolAdmin, [Role.SchoolAdmin]);
 
     session = await ownerInsert(
       `INSERT INTO academic_sessions (tenant_id, name, starts_on, ends_on, is_current)
@@ -246,12 +233,22 @@ describe('academics end to end', () => {
   });
 
   describe('permissions, through the real request path', () => {
-    it('refuses a student the student list with 403', async () => {
-      // Students do not hold student.read. 403 rather than 404, since a member of
-      // the school already knows the endpoint exists.
-      await request(server())
+    it('gives a student only themselves on the student list', async () => {
+      // Blueprint section 16. Students hold student.read since BE-P01, and the
+      // scope narrows it to their own record.
+      const response = await request(server())
         .get('/api/v1/students')
         .set('authorization', await asUser(users.student))
+        .expect(200);
+
+      expect(idsIn(response)).toEqual([studentIds.student]);
+    });
+
+    it('refuses a teacher the people management routes', async () => {
+      await request(server())
+        .post('/api/v1/students')
+        .set('authorization', await asUser(users.teacher))
+        .send({ firstName: 'Ada', lastName: 'Obi' })
         .expect(403);
     });
 

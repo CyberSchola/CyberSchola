@@ -5,8 +5,26 @@ import type { Role } from '../../auth/permission.matrix';
 /** Who is asking, for the purpose of narrowing a query. */
 export interface Actor {
   readonly userId: string;
-  readonly role: Role;
+  /** Every role the caller holds in this school. Possibly empty. */
+  readonly roles: ReadonlySet<Role>;
 }
+
+/**
+ * One role's reason for being allowed a row, as SQL.
+ *
+ * Pure data rather than a mutation of the query builder, so several roles'
+ * fragments can be combined into a single OR. Parameter names must be unique to
+ * the fragment's rule (prefix them), because every fragment for an actor lands in
+ * the same query. A collision with a different value is refused rather than
+ * silently overwritten.
+ */
+export interface ScopeFragment {
+  readonly sql: string;
+  readonly params: Readonly<Record<string, unknown>>;
+}
+
+/** Builds a role's fragment for a query alias and an actor. */
+export type FragmentBuilder = (alias: string, actor: Actor) => ScopeFragment;
 
 /**
  * Narrows a query to the rows this caller may see, inside their own school.
@@ -69,27 +87,87 @@ export function unrestrictedScope<TEntity extends ObjectLiteral>(): AccessScope<
 }
 
 /**
- * Builds a scope where some roles see everything and the rest are narrowed.
+ * Builds a scope where some roles see everything and the others are narrowed by
+ * their own relationship to the row.
  *
- * The shape nearly every rule takes: an administrator sees the whole school,
- * everyone else sees some subset defined by their own relationship to the row.
+ * ## Several roles, one OR
+ *
+ * A person can hold more than one role, and may see a row if **any** of their
+ * roles allows it. A teacher who is also a parent sees their pupils and their own
+ * children in one list. So each role declares its own fragment, and the fragments
+ * for the actor's roles are joined with OR inside one bracket, which keeps the
+ * tenant predicate that precedes it from being OR-ed away.
+ *
+ * ## Default deny, per role
+ *
+ * A role with no fragment contributes nothing. An actor whose roles contribute
+ * nothing at all, including an actor with no roles, gets `FALSE`: the query runs
+ * and returns no rows. That is deliberate. The alternative of applying no
+ * predicate would hand the whole school to exactly the people the rule forgot.
  */
 export function scopeFor<TEntity extends ObjectLiteral>(options: {
   /** Roles that see every row in the school. */
   readonly unrestrictedRoles: readonly Role[];
-  /** Applied to everyone else. */
-  readonly narrow: (query: SelectQueryBuilder<TEntity>, alias: string, actor: Actor) => void;
+  /** The narrowing each remaining role gets. A role left out sees nothing. */
+  readonly byRole: Readonly<Partial<Record<Role, FragmentBuilder>>>;
 }): AccessScope<TEntity> {
   const privileged = new Set<Role>(options.unrestrictedRoles);
 
   return {
     unrestricted: false,
     restrict(query, alias, actor) {
-      if (privileged.has(actor.role)) {
+      if ([...actor.roles].some((role) => privileged.has(role))) {
         return;
       }
 
-      options.narrow(query, alias, actor);
+      const combined = combineFragments(
+        [...actor.roles]
+          .map((role) => options.byRole[role])
+          .filter((build): build is FragmentBuilder => build !== undefined)
+          .map((build) => build(alias, actor)),
+      );
+
+      query.andWhere(combined.sql, combined.params);
     },
+  };
+}
+
+/**
+ * Joins fragments with OR, or yields `FALSE` for none.
+ *
+ * Identical fragments are kept once, so two roles sharing a rule (every
+ * non-administrator sees their own membership, say) do not repeat it. Exported
+ * for the unit tests and for callers that need the same predicate as a selected
+ * flag rather than a filter.
+ */
+export function combineFragments(fragments: readonly ScopeFragment[]): ScopeFragment {
+  const unique = new Map<string, ScopeFragment>();
+
+  for (const fragment of fragments) {
+    unique.set(fragment.sql, fragment);
+  }
+
+  if (unique.size === 0) {
+    return { sql: 'FALSE', params: {} };
+  }
+
+  const params: Record<string, unknown> = {};
+
+  for (const fragment of unique.values()) {
+    for (const [name, value] of Object.entries(fragment.params)) {
+      if (name in params && params[name] !== value) {
+        throw new Error(
+          `Two access-scope fragments bind the parameter "${name}" to different values. ` +
+            "Prefix each fragment's parameter names with its rule, so they cannot collide.",
+        );
+      }
+
+      params[name] = value;
+    }
+  }
+
+  return {
+    sql: `(${[...unique.keys()].map((sql) => `(${sql})`).join(' OR ')})`,
+    params,
   };
 }
