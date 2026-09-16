@@ -7,6 +7,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import { QueryFailedError } from 'typeorm';
+
 import { SYSTEM_MESSAGES } from '../../constants/system.messages';
 import { AuditCode, ErrorCode } from '../enums/error-code.enum';
 import {
@@ -55,6 +57,28 @@ function runFilter(
   new AllExceptionsFilter().catch(exception, host);
 
   return captured;
+}
+
+/**
+ * A query failure as TypeORM raises it, with a driver error carrying a SQLSTATE
+ * and the kind of message Postgres actually produces: constraint and table names
+ * and the offending values, all of which must stay out of the response.
+ */
+function constraintFailure(code: string): QueryFailedError {
+  const driverError = Object.assign(
+    new Error(
+      'duplicate key value violates unique constraint "classes_session_grade_arm_unique_live"',
+    ),
+    {
+      code,
+      detail:
+        'Key (session_id, grade_level_id, arm)=(3f2504e0-..., 11111111-..., A) already exists.',
+      table: 'classes',
+      constraint: 'classes_session_grade_arm_unique_live',
+    },
+  );
+
+  return new QueryFailedError('INSERT INTO "classes" ...', [], driverError);
 }
 
 describe('AllExceptionsFilter', () => {
@@ -325,5 +349,71 @@ describe('AllExceptionsFilter', () => {
       'message',
       'statusCode',
     ]);
+  });
+  describe('database constraint violations', () => {
+    // The academic spine is the first module that relies on constraints as its
+    // intended way of refusing bad input. Before this mapping, an overlapping
+    // term or a duplicate class came back as a 500.
+
+    it.each([
+      ['23505', 'unique violation', HttpStatus.CONFLICT, ErrorCode.CONFLICT],
+      [
+        '23P01',
+        'exclusion violation, such as overlapping terms',
+        HttpStatus.CONFLICT,
+        ErrorCode.CONFLICT,
+      ],
+      ['23503', 'foreign key violation', HttpStatus.NOT_FOUND, ErrorCode.NOT_FOUND],
+      ['23514', 'check violation', HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR],
+      ['23502', 'not-null violation', HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR],
+    ])('maps %s (%s) to %s', (code, _label, status, errorCode) => {
+      const { status: actual, body } = runFilter(constraintFailure(code));
+
+      expect(actual).toBe(status);
+      expect(body.code).toBe(errorCode);
+    });
+
+    it('never reflects the driver message, constraint, table or values', () => {
+      // Rule 1 of the filter. The Postgres message names the constraint and the
+      // table and repeats the conflicting values, which is exactly the internal
+      // detail that belongs in the log rather than the response.
+      const { body } = runFilter(constraintFailure('23505'));
+      const text = JSON.stringify(body);
+
+      for (const leak of [
+        'classes_session_grade_arm_unique_live',
+        'classes',
+        'session_id',
+        'Key (',
+      ]) {
+        expect(text).not.toContain(leak);
+      }
+    });
+
+    it('treats a foreign key violation as indistinguishable from a missing record', () => {
+      // Every reference between tenant-owned tables carries the tenant, so a
+      // reference to another school's record fails as a foreign key violation.
+      // Per decision 6A it must look exactly like pointing at nothing.
+      const constraint = runFilter(constraintFailure('23503'));
+      const miss = runFilter(new ResourceNotFoundException());
+
+      expect(constraint.status).toBe(miss.status);
+      expect(constraint.body).toEqual(miss.body);
+    });
+
+    it('still reports an unrelated query failure as a 500', () => {
+      // A syntax error or a lost connection is a genuine server fault. Only the
+      // constraint codes above are the database doing its job.
+      const { status, body } = runFilter(constraintFailure('42601'));
+
+      expect(status).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
+      expect(body.code).toBe(ErrorCode.INTERNAL_ERROR);
+    });
+
+    it('reports a query failure with no SQLSTATE as a 500 rather than guessing', () => {
+      const bare = new QueryFailedError('SELECT 1', [], new Error('connection terminated'));
+
+      expect(runFilter(bare).status).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
+    });
   });
 });
