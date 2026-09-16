@@ -3,9 +3,12 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Permission } from '../auth/permission.matrix';
 import { RequiresPermission } from '../auth/requires-permission.decorator';
-import { ResponseMessage } from '../common/decorators/response-message.decorator';
 import { type Page, PaginationQueryDto, toPageRequest } from '../common/pagination/pagination';
-import { ApiItemResponse, ApiPageResponse } from '../common/swagger/api-responses';
+import {
+  ApiErrorResponse,
+  ApiItemResponse,
+  ApiPageResponse,
+} from '../common/swagger/api-responses';
 import {
   ClassEnrolmentDto,
   ClassSubjectDto,
@@ -45,8 +48,7 @@ export class PeopleAssignmentsController {
       'class they supervise this session, or taking a subject they teach, with electives ' +
       'counted only for registered students. The total follows the same scope.',
   })
-  @ApiPageResponse(PersonAnchorDto)
-  @ResponseMessage('Students retrieved.')
+  @ApiPageResponse(PersonAnchorDto, 'Students retrieved.')
   listStudents(@Query() query: PaginationQueryDto): Promise<Page<PersonAnchorDto>> {
     return this.academics.listStudents(toPageRequest(query));
   }
@@ -57,8 +59,14 @@ export class PeopleAssignmentsController {
     summary: 'Anchor a membership as a student',
     description: 'The membership must hold the STUDENT role (422 otherwise).',
   })
-  @ApiItemResponse(PersonAnchorDto, HttpStatus.CREATED)
-  @ResponseMessage('Student created.')
+  @ApiItemResponse(PersonAnchorDto, 'Student created.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(HttpStatus.NOT_FOUND, 'No membership with this id in this school.')
+  @ApiErrorResponse(HttpStatus.CONFLICT, 'This membership is already a student.')
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'The membership does not hold the STUDENT role.',
+  )
   createStudent(@Body() input: CreatePersonAnchorDto): Promise<PersonAnchorDto> {
     return this.academics.createStudent(input.membershipId);
   }
@@ -69,8 +77,14 @@ export class PeopleAssignmentsController {
     summary: 'Anchor a membership as a teacher',
     description: 'The membership must hold the TEACHER role (422 otherwise).',
   })
-  @ApiItemResponse(PersonAnchorDto, HttpStatus.CREATED)
-  @ResponseMessage('Teacher created.')
+  @ApiItemResponse(PersonAnchorDto, 'Teacher created.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(HttpStatus.NOT_FOUND, 'No membership with this id in this school.')
+  @ApiErrorResponse(HttpStatus.CONFLICT, 'This membership is already a teacher.')
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'The membership does not hold the TEACHER role.',
+  )
   createTeacher(@Body() input: CreatePersonAnchorDto): Promise<PersonAnchorDto> {
     return this.academics.createTeacher(input.membershipId);
   }
@@ -78,8 +92,10 @@ export class PeopleAssignmentsController {
   @Post('class-supervisors')
   @RequiresPermission(Permission.AcademicManage)
   @ApiOperation({ summary: 'Assign a teacher to supervise a class' })
-  @ApiItemResponse(ClassSupervisorDto, HttpStatus.CREATED)
-  @ResponseMessage('Supervisor assigned.')
+  @ApiItemResponse(ClassSupervisorDto, 'Supervisor assigned.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(HttpStatus.NOT_FOUND, 'The class or teacher does not exist in this school.')
+  @ApiErrorResponse(HttpStatus.CONFLICT, 'This teacher already supervises the class.')
   createClassSupervisor(@Body() input: CreateClassSupervisorDto): Promise<ClassSupervisorDto> {
     return this.academics.createClassSupervisor(input);
   }
@@ -90,8 +106,13 @@ export class PeopleAssignmentsController {
     summary: 'Assign a teacher to a subject in a class',
     description: 'A subject is taught once per class (409 on a duplicate).',
   })
-  @ApiItemResponse(ClassSubjectDto, HttpStatus.CREATED)
-  @ResponseMessage('Subject assigned.')
+  @ApiItemResponse(ClassSubjectDto, 'Subject assigned.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(
+    HttpStatus.NOT_FOUND,
+    'The class, subject or teacher does not exist in this school.',
+  )
+  @ApiErrorResponse(HttpStatus.CONFLICT, 'The subject is already taught in this class.')
   createClassSubject(@Body() input: CreateClassSubjectDto): Promise<ClassSubjectDto> {
     return this.academics.createClassSubject(input);
   }
@@ -104,8 +125,10 @@ export class PeopleAssignmentsController {
       'The enrolment takes the class session. A student may be in one class per session ' +
       '(409 on a second).',
   })
-  @ApiItemResponse(ClassEnrolmentDto, HttpStatus.CREATED)
-  @ResponseMessage('Student enrolled.')
+  @ApiItemResponse(ClassEnrolmentDto, 'Student enrolled.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(HttpStatus.NOT_FOUND, 'The class or student does not exist in this school.')
+  @ApiErrorResponse(HttpStatus.CONFLICT, 'The student is already enrolled in a class this session.')
   createEnrolment(@Body() input: CreateClassEnrolmentDto): Promise<ClassEnrolmentDto> {
     return this.academics.createEnrolment(input);
   }
@@ -118,8 +141,17 @@ export class PeopleAssignmentsController {
       'The subject must be an elective, and the student must be enrolled in the class it is ' +
       'taught in (422 otherwise).',
   })
-  @ApiItemResponse(ElectiveRegistrationDto, HttpStatus.CREATED)
-  @ResponseMessage('Registration created.')
+  @ApiItemResponse(ElectiveRegistrationDto, 'Registration created.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(
+    HttpStatus.NOT_FOUND,
+    'The class subject or student does not exist in this school.',
+  )
+  @ApiErrorResponse(HttpStatus.CONFLICT, 'The student is already registered for this elective.')
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'The subject is not an elective, or the student is not enrolled in that class.',
+  )
   createElectiveRegistration(
     @Body() input: CreateElectiveRegistrationDto,
   ): Promise<ElectiveRegistrationDto> {

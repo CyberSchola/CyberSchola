@@ -13,9 +13,12 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Permission } from '../auth/permission.matrix';
 import { RequiresPermission } from '../auth/requires-permission.decorator';
-import { ResponseMessage } from '../common/decorators/response-message.decorator';
 import { type Page, PaginationQueryDto, toPageRequest } from '../common/pagination/pagination';
-import { ApiItemResponse, ApiPageResponse } from '../common/swagger/api-responses';
+import {
+  ApiErrorResponse,
+  ApiItemResponse,
+  ApiPageResponse,
+} from '../common/swagger/api-responses';
 import {
   AcademicSessionDto,
   ClassDto,
@@ -51,8 +54,7 @@ export class AcademicStructureController {
   @Get('academic-sessions')
   @RequiresPermission(Permission.AcademicRead)
   @ApiOperation({ summary: 'Academic sessions' })
-  @ApiPageResponse(AcademicSessionDto)
-  @ResponseMessage('Sessions retrieved.')
+  @ApiPageResponse(AcademicSessionDto, 'Sessions retrieved.')
   listSessions(@Query() query: PaginationQueryDto): Promise<Page<AcademicSessionDto>> {
     return this.academics.listSessions(toPageRequest(query));
   }
@@ -64,8 +66,13 @@ export class AcademicStructureController {
     description:
       'Sessions in a school may not overlap; an overlapping session is refused with 409.',
   })
-  @ApiItemResponse(AcademicSessionDto, HttpStatus.CREATED)
-  @ResponseMessage('Session created.')
+  @ApiItemResponse(AcademicSessionDto, 'Session created.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(
+    HttpStatus.CONFLICT,
+    'The dates overlap another session in this school, or the name is taken.',
+  )
+  @ApiErrorResponse(HttpStatus.UNPROCESSABLE_ENTITY, 'The session ends before it starts.')
   createSession(@Body() input: CreateAcademicSessionDto): Promise<AcademicSessionDto> {
     return this.academics.createSession(input);
   }
@@ -78,8 +85,8 @@ export class AcademicStructureController {
       'Every teacher reaches students through the current session, so this moves all teacher ' +
       'access to the chosen year at once.',
   })
-  @ApiItemResponse(AcademicSessionDto)
-  @ResponseMessage('Current session updated.')
+  @ApiItemResponse(AcademicSessionDto, 'Current session updated.')
+  @ApiErrorResponse(HttpStatus.NOT_FOUND, 'No session with this id in this school.')
   setCurrentSession(@Param('id', ParseUUIDPipe) id: string): Promise<AcademicSessionDto> {
     return this.academics.setCurrentSession(id);
   }
@@ -87,8 +94,7 @@ export class AcademicStructureController {
   @Get('terms')
   @RequiresPermission(Permission.AcademicRead)
   @ApiOperation({ summary: 'Terms' })
-  @ApiPageResponse(TermDto)
-  @ResponseMessage('Terms retrieved.')
+  @ApiPageResponse(TermDto, 'Terms retrieved.')
   listTerms(@Query() query: PaginationQueryDto): Promise<Page<TermDto>> {
     return this.academics.listTerms(toPageRequest(query));
   }
@@ -101,8 +107,17 @@ export class AcademicStructureController {
       'A term must sit within its session (422 otherwise) and must not overlap another term in ' +
       'the same session (409 otherwise).',
   })
-  @ApiItemResponse(TermDto, HttpStatus.CREATED)
-  @ResponseMessage('Term created.')
+  @ApiItemResponse(TermDto, 'Term created.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(HttpStatus.NOT_FOUND, 'No session with this id in this school.')
+  @ApiErrorResponse(
+    HttpStatus.CONFLICT,
+    'The dates overlap another term in the session, or the name is taken.',
+  )
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'The term falls outside its session, or ends before it starts.',
+  )
   createTerm(@Body() input: CreateTermDto): Promise<TermDto> {
     return this.academics.createTerm(input);
   }
@@ -110,8 +125,7 @@ export class AcademicStructureController {
   @Get('grade-levels')
   @RequiresPermission(Permission.AcademicRead)
   @ApiOperation({ summary: 'Grade levels' })
-  @ApiPageResponse(GradeLevelDto)
-  @ResponseMessage('Grade levels retrieved.')
+  @ApiPageResponse(GradeLevelDto, 'Grade levels retrieved.')
   listGradeLevels(@Query() query: PaginationQueryDto): Promise<Page<GradeLevelDto>> {
     return this.academics.listGradeLevels(toPageRequest(query));
   }
@@ -119,8 +133,9 @@ export class AcademicStructureController {
   @Post('grade-levels')
   @RequiresPermission(Permission.AcademicManage)
   @ApiOperation({ summary: 'Create a grade level' })
-  @ApiItemResponse(GradeLevelDto, HttpStatus.CREATED)
-  @ResponseMessage('Grade level created.')
+  @ApiItemResponse(GradeLevelDto, 'Grade level created.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(HttpStatus.CONFLICT, 'The name or position is already used in this school.')
   createGradeLevel(@Body() input: CreateGradeLevelDto): Promise<GradeLevelDto> {
     return this.academics.createGradeLevel(input);
   }
@@ -128,8 +143,7 @@ export class AcademicStructureController {
   @Get('classes')
   @RequiresPermission(Permission.AcademicRead)
   @ApiOperation({ summary: 'Classes' })
-  @ApiPageResponse(ClassDto)
-  @ResponseMessage('Classes retrieved.')
+  @ApiPageResponse(ClassDto, 'Classes retrieved.')
   listClasses(@Query() query: PaginationQueryDto): Promise<Page<ClassDto>> {
     return this.academics.listClasses(toPageRequest(query));
   }
@@ -142,8 +156,13 @@ export class AcademicStructureController {
       'A class is a grade level and an arm within one session. The arm is compared ' +
       'case-insensitively, so "a" and "A" are the same class.',
   })
-  @ApiItemResponse(ClassDto, HttpStatus.CREATED)
-  @ResponseMessage('Class created.')
+  @ApiItemResponse(ClassDto, 'Class created.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(
+    HttpStatus.NOT_FOUND,
+    'The session or grade level does not exist in this school.',
+  )
+  @ApiErrorResponse(HttpStatus.CONFLICT, 'This grade level and arm already exist in the session.')
   createClass(@Body() input: CreateClassDto): Promise<ClassDto> {
     return this.academics.createClass(input);
   }
@@ -151,8 +170,7 @@ export class AcademicStructureController {
   @Get('subjects')
   @RequiresPermission(Permission.AcademicRead)
   @ApiOperation({ summary: 'Subjects' })
-  @ApiPageResponse(SubjectDto)
-  @ResponseMessage('Subjects retrieved.')
+  @ApiPageResponse(SubjectDto, 'Subjects retrieved.')
   listSubjects(@Query() query: PaginationQueryDto): Promise<Page<SubjectDto>> {
     return this.academics.listSubjects(toPageRequest(query));
   }
@@ -160,8 +178,9 @@ export class AcademicStructureController {
   @Post('subjects')
   @RequiresPermission(Permission.AcademicManage)
   @ApiOperation({ summary: 'Create a subject' })
-  @ApiItemResponse(SubjectDto, HttpStatus.CREATED)
-  @ResponseMessage('Subject created.')
+  @ApiItemResponse(SubjectDto, 'Subject created.', HttpStatus.CREATED)
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(HttpStatus.CONFLICT, 'A subject with this name already exists in this school.')
   createSubject(@Body() input: CreateSubjectDto): Promise<SubjectDto> {
     return this.academics.createSubject(input);
   }

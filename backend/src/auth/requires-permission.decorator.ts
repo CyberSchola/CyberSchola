@@ -1,5 +1,6 @@
-import { SetMetadata } from '@nestjs/common';
+import { applyDecorators, HttpStatus, SetMetadata } from '@nestjs/common';
 
+import { ApiErrorResponse } from '../common/swagger/api-responses';
 import type { Permission } from './permission.matrix';
 
 export const REQUIRES_PERMISSION_KEY = 'auth_requires_permission';
@@ -19,7 +20,13 @@ export const NO_PERMISSION_KEY = 'auth_no_permission_required';
  * is the normal case rather than the exception.
  */
 export const RequiresPermission = (permission: Permission) =>
-  SetMetadata(REQUIRES_PERMISSION_KEY, permission);
+  applyDecorators(
+    SetMetadata(REQUIRES_PERMISSION_KEY, permission),
+    // Every route that declares a permission can refuse on both counts, so the
+    // documentation comes from the same line that creates the refusal.
+    ApiErrorResponse(HttpStatus.UNAUTHORIZED, 'No valid access token.'),
+    ApiErrorResponse(HttpStatus.FORBIDDEN, `The caller's role does not hold \`${permission}\`.`),
+  );
 
 /**
  * Declares that a route is reachable by any authenticated caller.
@@ -36,4 +43,9 @@ export const RequiresPermission = (permission: Permission) =>
  * The conformance suite holds every use of this to an allow list, so adding one
  * is a line in a diff that a reviewer is shown.
  */
-export const NoPermissionRequired = () => SetMetadata(NO_PERMISSION_KEY, true);
+export const NoPermissionRequired = () =>
+  applyDecorators(
+    SetMetadata(NO_PERMISSION_KEY, true),
+    // Any signed-in caller may use the route, so an anonymous one is still refused.
+    ApiErrorResponse(HttpStatus.UNAUTHORIZED, 'No valid access token.'),
+  );
