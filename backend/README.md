@@ -54,9 +54,9 @@ Twenty decisions were settled before the first commit and they are binding on th
 
 **A reference between two schools' tables carries the school.** Postgres checks a foreign key without row-level security, so a plain `class_id REFERENCES classes(id)` lets one school's row point at another school's class, and nothing in the policies notices. Every foreign key between tenant-owned tables is therefore composite, `(tenant_id, class_id) REFERENCES classes(tenant_id, id)`, which makes a cross-school reference impossible to store. The schema conformance suite fails the build on any that is not.
 
-## Known limitations
+**A role is a row, and a person can hold several.** Being a teacher in a school means having a live `teachers` row linked to your membership, and the same for `students`, `parents`, `staff` and `school_admins`. The `membership_roles` view reads them back. A teacher whose child attends the same school holds both roles on one membership: permissions are the union of their roles, and each access scope ORs one branch per role. Records exist before logins do, so a school can enrol a class of children who will never sign in, and an administrator links a login to a record when there is one.
 
-**One role per person per school.** A membership carries a single role, and a person has at most one live membership in a school. A teacher whose child attends the same school cannot yet be both teacher and parent there. This is deliberate for now and is settled in the people phase, where parents make it unavoidable. The `students` and `teachers` tables are kept free of any foreign key tied to `memberships.role` so that one membership can later carry several of them without a schema rewrite.
+**Every view runs as its caller.** A Postgres view executes with its owner's privileges by default, and the migration role that owns our views bypasses row-level security. So every view is created `WITH (security_invoker = true)`, and the schema conformance suite fails the build on any that is not.
 
 ## Layout
 
