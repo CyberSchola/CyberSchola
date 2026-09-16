@@ -40,6 +40,21 @@ export enum Permission {
   SchoolRead = 'school.read',
   /** Change the school's own record. */
   SchoolUpdate = 'school.update',
+  /** See the academic structure: sessions, terms, grade levels, classes, subjects. */
+  AcademicRead = 'academic.read',
+  /**
+   * Shape the academic structure and who is placed in it: create sessions,
+   * terms, classes and subjects, and assign teachers and enrol students.
+   * Blueprint section 12 puts all of this under the administrator.
+   */
+  AcademicManage = 'academic.manage',
+  /**
+   * See students. Which ones is the access scope's question: an administrator
+   * sees the whole school, a teacher sees only the students blueprint sections
+   * 13 and 14 allow, meaning those in a class they supervise or taking a subject
+   * they teach.
+   */
+  StudentRead = 'student.read',
 }
 
 /**
@@ -69,11 +84,19 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.MembershipWrite,
     Permission.SchoolRead,
     Permission.SchoolUpdate,
+    Permission.AcademicRead,
+    Permission.AcademicManage,
+    Permission.StudentRead,
   ],
-  [Role.Teacher]: [Permission.MembershipRead, Permission.SchoolRead],
-  [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead],
-  [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead],
-  [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead],
+  [Role.Teacher]: [
+    Permission.MembershipRead,
+    Permission.SchoolRead,
+    Permission.AcademicRead,
+    Permission.StudentRead,
+  ],
+  [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
+  [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
+  [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
 });
 
 /** Lookup sets, built once. The matrix above stays the readable declaration. */

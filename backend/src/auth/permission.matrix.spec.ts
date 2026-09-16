@@ -27,11 +27,19 @@ describe('the permission matrix', () => {
       Permission.MembershipWrite,
       Permission.SchoolRead,
       Permission.SchoolUpdate,
+      Permission.AcademicRead,
+      Permission.AcademicManage,
+      Permission.StudentRead,
     ],
-    [Role.Teacher]: [Permission.MembershipRead, Permission.SchoolRead],
-    [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead],
-    [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead],
-    [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead],
+    [Role.Teacher]: [
+      Permission.MembershipRead,
+      Permission.SchoolRead,
+      Permission.AcademicRead,
+      Permission.StudentRead,
+    ],
+    [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
+    [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
+    [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
   };
 
   describe.each(ROLES)('%s', (role) => {
@@ -63,7 +71,8 @@ describe('the permission matrix', () => {
     const writers = ROLES.filter(
       (role) =>
         roleHasPermission(role, Permission.MembershipWrite) ||
-        roleHasPermission(role, Permission.SchoolUpdate),
+        roleHasPermission(role, Permission.SchoolUpdate) ||
+        roleHasPermission(role, Permission.AcademicManage),
     );
 
     expect(writers).toEqual([Role.SchoolAdmin]);
@@ -117,5 +126,14 @@ describe('the permission matrix', () => {
 
       expect(roleHasPermission(Role.Teacher, Permission.SchoolUpdate)).toBe(before);
     });
+  });
+  it('lets only administrators and teachers read students', () => {
+    // Blueprint section 16 has students seeing only themselves, and section 17
+    // has parents seeing only linked children. Neither is a list of students, so
+    // neither holds this permission; their own views arrive with the people
+    // phase, where the parent relationship exists.
+    const readers = ROLES.filter((role) => roleHasPermission(role, Permission.StudentRead));
+
+    expect(readers.sort()).toEqual([Role.SchoolAdmin, Role.Teacher].sort());
   });
 });
