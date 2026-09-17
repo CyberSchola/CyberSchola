@@ -7,7 +7,7 @@ import { Permission, Role } from '../src/auth/permission.matrix';
 import { PermissionInterceptor } from '../src/auth/permission.interceptor';
 import { REQUIRES_PERMISSION_KEY } from '../src/auth/requires-permission.decorator';
 import { ListMembersAction } from '../src/identity/list-members.action';
-import { getRequestContext, runInJobContext } from '../src/tenancy/request-context';
+import { getRequestContext, runWithRequestContext } from '../src/tenancy/request-context';
 import { JobContextService } from '../src/tenancy/job-context.service';
 import { TenantTransactionService } from '../src/tenancy/tenant-transaction.service';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
@@ -22,9 +22,15 @@ import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './dat
  * It is not, and the reason is that the route permission is not the boundary
  * for background work. `TenantScopedAction` reads the tenant and the role from
  * a context that only two things open: the HTTP interceptor, after
- * authenticating and resolving a membership, or `runInJobContext`, called
- * deliberately with a school, an actor and a role. A job that opened neither
- * gets an exception rather than an unscoped query.
+ * authenticating and resolving a membership, or `JobContextService.runAsMember`,
+ * after reading the actor's membership and role from the database. A job that
+ * opened neither gets an exception rather than an unscoped query.
+ *
+ * There is no third way. An earlier version also exported a low-level
+ * `runInJobContext` that took a tenant, an actor and a role from its caller;
+ * review pointed out a future worker could call it directly, so it was removed.
+ * `context-entry-points.spec.ts` and an ESLint rule keep the two openers to
+ * their one caller each.
  *
  * Written against real Postgres as `cyberschola_app`, because the claim is
  * about what rows come back, and a mock would answer whatever it was told to.
@@ -169,36 +175,53 @@ describe('the job authorization boundary', () => {
     });
   });
 
-  describe('a job that opens a context deliberately', () => {
-    it('reads the school it named, scoped to the role it named', async () => {
-      const page = await runInJobContext(
-        {
-          jobName: 'nightly-roster-export',
-          tenantId: school,
-          userId: admin,
-          role: Role.SchoolAdmin,
-        },
-        () => listMembers(school, admin),
+  describe('a job through the verified entry point', () => {
+    it('reads the school it named, and nothing from any other school', async () => {
+      const page = await jobs.runAsMember(
+        { jobName: 'nightly-roster-export', tenantId: school, userId: admin },
+        (manager) => new ListMembersAction(manager).execute(50, 0),
       );
 
       expect(page.items.map((member) => member.userId).sort()).toEqual([admin, teacher].sort());
+      expect(page.items.map((member) => member.userId)).not.toContain(outsider);
     });
 
     it('is narrowed by the access scope exactly as a request would be', async () => {
       // A job acting as a teacher gains nothing by being a job. This is the
       // property that stops "run it in a worker" becoming a way around the
       // access scope.
-      const page = await runInJobContext(
-        { jobName: 'teacher-digest', tenantId: school, userId: teacher, role: Role.Teacher },
-        () => listMembers(school, teacher),
+      const page = await jobs.runAsMember(
+        { jobName: 'teacher-digest', tenantId: school, userId: teacher },
+        (manager) => new ListMembersAction(manager).execute(50, 0),
       );
 
       expect(page.items.map((member) => member.userId)).toEqual([teacher]);
       expect(page.total).toBe(1);
     });
 
+    it('records what it was, so an audit can tell a job from a person', async () => {
+      const seen = await jobs.runAsMember(
+        { jobName: 'nightly-roster-export', tenantId: school, userId: admin },
+        () => Promise.resolve(getRequestContext()),
+      );
+
+      expect(seen?.origin).toBe('job');
+      expect(seen?.jobName).toBe('nightly-roster-export');
+    });
+
+    it('does not leave the context open afterwards', async () => {
+      await jobs.runAsMember(
+        { jobName: 'nightly-roster-export', tenantId: school, userId: admin },
+        () => Promise.resolve(undefined),
+      );
+
+      expect(getRequestContext()).toBeUndefined();
+    });
+  });
+
+  describe('a job cannot establish identity by supplying it', () => {
     it('cannot name a school its actor does not belong to', async () => {
-      // This is the case that made JobContextService exist. Going through the
+      // This is the case that made JobContextService exist. Through the removed
       // low-level primitive, a job could assert any tenant and read it: RLS was
       // working exactly as designed, because the membership policy admits a row
       // when tenant_id matches the session, and the job had simply set the
@@ -210,54 +233,72 @@ describe('the job authorization boundary', () => {
       ).rejects.toThrow(/no live membership/i);
     });
 
-    it('takes the role from the membership rather than from the caller', async () => {
-      // A job cannot claim to be an administrator. The role is read off the row,
-      // so a teacher's job is scoped as a teacher no matter what it asks for.
-      const seen = await jobs.runAsMember(
-        { jobName: 'teacher-digest', tenantId: school, userId: teacher },
-        () => Promise.resolve(getRequestContext()?.role),
-      );
+    it('cannot claim a role, even one smuggled in past the type system', async () => {
+      // The signature has no role, so this needs a cast, which is exactly what
+      // careless or hurried code does. The extra field is ignored: the context
+      // is built field by field from the membership row.
+      const smuggled = {
+        jobName: 'teacher-digest',
+        tenantId: school,
+        userId: teacher,
+        role: Role.SchoolAdmin,
+      } as unknown as Parameters<JobContextService['runAsMember']>[0];
 
-      expect(seen).toBe(Role.Teacher);
+      const outcome = await jobs.runAsMember(smuggled, async (manager) => ({
+        role: getRequestContext()?.role,
+        page: await new ListMembersAction(manager).execute(50, 0),
+      }));
+
+      expect(outcome.role).toBe(Role.Teacher);
+      expect(outcome.page.items.map((member) => member.userId)).toEqual([teacher]);
     });
 
-    it('scopes a verified job exactly as a request would be scoped', async () => {
-      const page = await jobs.runAsMember(
-        { jobName: 'teacher-digest', tenantId: school, userId: teacher },
-        (manager) => new ListMembersAction(manager).execute(50, 0),
-      );
+    it('cannot act through a suspended membership', async () => {
+      await owner.query(`UPDATE memberships SET status = 'SUSPENDED' WHERE user_id = $1`, [
+        teacher,
+      ]);
 
-      expect(page.items.map((member) => member.userId)).toEqual([teacher]);
-      expect(page.total).toBe(1);
+      try {
+        await expect(
+          jobs.runAsMember({ jobName: 'teacher-digest', tenantId: school, userId: teacher }, () =>
+            Promise.resolve('should not run'),
+          ),
+        ).rejects.toThrow(/no live membership/i);
+      } finally {
+        await owner.query(`UPDATE memberships SET status = 'ACTIVE' WHERE user_id = $1`, [teacher]);
+      }
     });
 
-    it('records what it was, so an audit can tell a job from a person', () => {
-      const seen = runInJobContext(
-        {
-          jobName: 'nightly-roster-export',
-          tenantId: school,
-          userId: admin,
-          role: Role.SchoolAdmin,
-        },
-        () => getRequestContext(),
-      );
+    it('cannot act through a removed membership', async () => {
+      await owner.query(`UPDATE memberships SET deleted_at = now() WHERE user_id = $1`, [teacher]);
 
-      expect(seen?.origin).toBe('job');
-      expect(seen?.jobName).toBe('nightly-roster-export');
+      try {
+        await expect(
+          jobs.runAsMember({ jobName: 'teacher-digest', tenantId: school, userId: teacher }, () =>
+            Promise.resolve('should not run'),
+          ),
+        ).rejects.toThrow(/no live membership/i);
+      } finally {
+        await owner.query(`UPDATE memberships SET deleted_at = NULL WHERE user_id = $1`, [teacher]);
+      }
     });
 
-    it('does not leave the context open afterwards', () => {
-      runInJobContext(
-        {
-          jobName: 'nightly-roster-export',
-          tenantId: school,
-          userId: admin,
-          role: Role.SchoolAdmin,
-        },
-        () => undefined,
-      );
-
-      expect(getRequestContext()).toBeUndefined();
+    it('cannot fabricate a job context through the HTTP opener', () => {
+      // The other context opener refuses job contexts outright, so it is not a
+      // way around runAsMember either.
+      expect(() =>
+        runWithRequestContext(
+          {
+            origin: 'job',
+            jobName: 'forged',
+            tenantId: otherSchool,
+            userId: admin,
+            role: Role.SchoolAdmin,
+            requestId: 'forged',
+          },
+          () => listMembers(otherSchool, admin),
+        ),
+      ).toThrow(/JobContextService\.runAsMember/);
     });
   });
 
@@ -266,29 +307,21 @@ describe('the job authorization boundary', () => {
       jobName: 'job',
       tenantId: '11111111-2222-4333-8444-555555555555',
       userId: '22222222-3333-4444-8555-666666666666',
-      role: Role.Teacher,
     };
+    const nothing = () => Promise.resolve(undefined);
 
-    it('refuses an unnamed job', () => {
-      expect(() => runInJobContext({ ...valid, jobName: '  ' }, () => undefined)).toThrow(
+    it('refuses an unnamed job', async () => {
+      await expect(jobs.runAsMember({ ...valid, jobName: '  ' }, nothing)).rejects.toThrow(
         /jobName/,
       );
     });
 
-    it.each(['not-a-uuid', ''])('refuses a tenant id of %p', (tenantId) => {
-      expect(() => runInJobContext({ ...valid, tenantId }, () => undefined)).toThrow(/tenant id/i);
+    it.each(['not-a-uuid', ''])('refuses a tenant id of %p', async (tenantId) => {
+      await expect(jobs.runAsMember({ ...valid, tenantId }, nothing)).rejects.toThrow(/tenant id/i);
     });
 
-    it.each(['not-a-uuid', ''])('refuses a user id of %p', (userId) => {
-      expect(() => runInJobContext({ ...valid, userId }, () => undefined)).toThrow(/user id/i);
-    });
-
-    it('refuses a role the matrix does not recognise', () => {
-      // Fails closed exactly as the request path does. A job must not be the
-      // route by which an unknown role gets in.
-      expect(() =>
-        runInJobContext({ ...valid, role: 'SUPER_ADMIN' as Role }, () => undefined),
-      ).toThrow(/unrecognised role/i);
+    it.each(['not-a-uuid', ''])('refuses a user id of %p', async (userId) => {
+      await expect(jobs.runAsMember({ ...valid, userId }, nothing)).rejects.toThrow(/user id/i);
     });
   });
 });
