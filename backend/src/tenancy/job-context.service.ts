@@ -2,10 +2,13 @@ import { Injectable } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 
 import { toRole, type Role } from '../auth/permission.matrix';
-import { runInJobContext } from './request-context';
+import { enterVerifiedJobContext } from './request-context';
 import { TenantTransactionService } from './tenant-transaction.service';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 interface MembershipRow {
+  id: string;
   role: string;
 }
 
@@ -61,15 +64,39 @@ export class JobContextService {
     },
     work: (manager: EntityManager) => Promise<T>,
   ): Promise<T> {
-    const role = await this.roleWithin(job.tenantId, job.userId);
+    // Checked before the database is touched, so a malformed job never even
+    // reads a membership.
+    if (job.jobName.trim() === '') {
+      throw new Error('A job context needs a jobName, so an audit line can say what ran.');
+    }
 
-    return runInJobContext({ ...job, role }, () =>
-      this.transactions.runInUserAndTenantContext(job.userId, job.tenantId, work),
+    if (!UUID_PATTERN.test(job.tenantId)) {
+      throw new Error('Refusing to open a job context for a non-uuid tenant id.');
+    }
+
+    if (!UUID_PATTERN.test(job.userId)) {
+      throw new Error('Refusing to open a job context for a non-uuid user id.');
+    }
+
+    const membership = await this.membershipWithin(job.tenantId, job.userId);
+
+    // Built field by field from the verified row, never by spreading the job.
+    // Spreading would carry through anything else a caller attached, such as a
+    // `role` smuggled in with a cast.
+    return enterVerifiedJobContext(
+      {
+        jobName: job.jobName,
+        tenantId: job.tenantId,
+        userId: job.userId,
+        membershipId: membership.id,
+        role: membership.role,
+      },
+      () => this.transactions.runInUserAndTenantContext(job.userId, job.tenantId, work),
     );
   }
 
   /**
-   * The actor's role in that school, or an error.
+   * The actor's live membership of that school, and the role on it, or an error.
    *
    * Runs in a user context and nothing else, which is the same bootstrap path
    * the request resolver uses: the membership policy admits a row when
@@ -77,10 +104,13 @@ export class JobContextService {
    * and cannot see anyone else's. With no tenant set, the other half of that
    * policy is false, so naming a school here proves nothing by itself.
    */
-  private async roleWithin(tenantId: string, userId: string): Promise<Role> {
+  private async membershipWithin(
+    tenantId: string,
+    userId: string,
+  ): Promise<{ id: string; role: Role }> {
     const rows = await this.transactions.runInUserContext(userId, async (manager) =>
       manager.query<MembershipRow[]>(
-        `SELECT role
+        `SELECT id, role
            FROM memberships
           WHERE user_id = $1
             AND tenant_id = $2
@@ -111,6 +141,6 @@ export class JobContextService {
       );
     }
 
-    return role;
+    return { id: found.id, role };
   }
 }

@@ -23,7 +23,7 @@ export interface RequestContext {
    *
    * Recorded rather than inferred, because the two paths are authorized in
    * completely different ways and an audit line that cannot tell them apart is
-   * not much of an audit line. See the note above `runInJobContext` for the
+   * not much of an audit line. See "How a context comes to exist" below for the
    * contract each one carries.
    */
   readonly origin: 'http' | 'job';
@@ -48,34 +48,95 @@ export interface RequestContext {
  * service in that chain request-scoped too. That is a real per-request cost,
  * and worse it is invisible: nothing tells you it happened.
  *
- * The storage is module-private. Nothing outside this file may `enterWith` or
- * `run`, so a context cannot be forged from application code.
+ * The storage itself is module-private. A context can only be opened through
+ * the two functions below, and each of those has exactly one caller in
+ * application code.
  */
 const storage = new AsyncLocalStorage<RequestContext>();
 
 /**
- * Runs `work` with the given context in scope.
+ * # How a context comes to exist
  *
- * Only the interceptor calls this. Everything else reads.
+ * A context is what every tenant-scoped action trusts, so whoever opens one is
+ * asserting who is asking, in which school, as what. There are exactly two
+ * places allowed to make that assertion, and each makes it only after the
+ * database has confirmed it:
+ *
+ *     HTTP request    TenantContextInterceptor, after the token is verified and
+ *                     the membership resolved   -> runWithRequestContext
+ *     Background job  JobContextService.runAsMember, after the membership and
+ *                     role are read from the database -> enterVerifiedJobContext
+ *
+ * Nothing else may call either function. TypeScript cannot make an exported
+ * function unreachable from other files, so this is enforced three ways, none
+ * of which relies on a comment being read:
+ *
+ * 1. ESLint `no-restricted-imports` refuses to let any other file in `src`
+ *    import them (see `eslint.config.mjs`).
+ * 2. `context-entry-points.spec.ts` scans the source and fails the unit suite if
+ *    any other file references them, whatever the lint configuration says.
+ * 3. Each function refuses the other's kind of context at runtime.
+ *
+ * There is deliberately no function that takes a tenant, an actor and a role
+ * from a caller and opens a job context with them. An earlier version exported
+ * one (`runInJobContext`), and review rightly pointed out that a future worker
+ * could call it directly and establish an unverified tenant context. A worker
+ * now has one door: `JobContextService.runAsMember`, which accepts a school and
+ * an actor and reads everything else from the database.
+ *
+ * Test files are exempt and build contexts directly, because a fixture context
+ * is how a unit of scoping logic is tested in isolation. That is a test
+ * constructing a precondition, not application code establishing identity.
+ */
+
+/**
+ * Runs `work` inside an HTTP request context.
+ *
+ * **Only `TenantContextInterceptor` calls this.** It refuses a job context, so
+ * it cannot be used to fabricate background authorization either.
  */
 export function runWithRequestContext<T>(context: RequestContext, work: () => T): T {
+  if (context.origin !== 'http') {
+    throw new Error(
+      'runWithRequestContext opens HTTP request contexts only. Background work must go through ' +
+        "JobContextService.runAsMember, which verifies the actor's membership first.",
+    );
+  }
+
   return storage.run(context, work);
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
- * Opens a context for trusted background work.
+ * The facts a job context is built from, as `JobContextService` read them from
+ * the database. Not a request from a caller.
+ */
+export interface VerifiedJobActor {
+  /** What this work is, for the audit trail. */
+  readonly jobName: string;
+  /** The school, as confirmed by a live membership row. */
+  readonly tenantId: string;
+  /** The person the job acts as. */
+  readonly userId: string;
+  /** The live membership that proved the actor belongs to the school. */
+  readonly membershipId: string;
+  /** The role read off that membership row. */
+  readonly role: Role;
+}
+
+/**
+ * Runs `work` inside a background job context.
  *
- * **Prefer `JobContextService.runAsMember`.** This is the low-level primitive
- * and it takes the role on trust, which means a caller supplying one has
- * asserted it rather than proved it. A test caught what that allows: a job
- * naming any school could read it, because nothing checked its actor belonged
- * there. `JobContextService` reads the membership first and takes the role off
- * that row, which is the same selection-not-assertion rule the HTTP resolver
- * follows. Call this directly only where the membership is already established.
+ * **Only `JobContextService.runAsMember` calls this**, with values it has just
+ * read from the database. It is not an entry point for jobs; `runAsMember` is.
  *
- * ## The security boundary this exists to draw
+ * It still validates what it is given, so that a mistake inside the verified
+ * path fails closed rather than producing a malformed context: a blank job
+ * name, a non-uuid id, a missing membership id, or a role the matrix does not
+ * recognise are all refused.
+ *
+ * ## Why jobs need a context at all
  *
  * HTTP requests and background jobs are authorized by different means, and the
  * difference has to be explicit or it becomes an assumption:
@@ -87,74 +148,48 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
  *       -> access scope (TenantScopedAction)
  *       -> row-level security
  *
- *     Trusted background job
- *       -> this function, called deliberately with a tenant and an actor
+ *     Background job
+ *       -> JobContextService.runAsMember (membership verified, role read)
  *       -> access scope (TenantScopedAction)
  *       -> row-level security
  *
  * The route permission step is absent from the second path because there is no
- * route. That is not a gap, and this is the part worth being precise about:
- * **the HTTP permission interceptor is not the authorization boundary for
- * background work.** It skips non-HTTP execution because it has nothing to read,
- * and skipping it grants nothing, because a job that has not opened a context
- * here cannot reach tenant data at all. `TenantScopedAction` demands a tenant
- * and a recognised role from the context and throws without them, so the
- * failure is a thrown error rather than an unscoped query.
- *
- * A job therefore has to say who it is acting as, in the same terms a request
- * would: a school, an actor, and a role. It gains nothing by being a job. What
- * it does gain is a recorded reason, in `jobName`, so an audit can tell a
- * scheduled report apart from a person.
- *
- * ## What this deliberately does not do
- *
- * It does not consult the permission matrix. A job is trusted code we wrote,
- * not a caller, and the matrix answers a question about callers. The access
- * scope still applies, so a job acting as a teacher sees what that teacher
- * would see. When queue jobs arrive in P8, a job payload carries its own tenant
- * and actor precisely so this call can be made honestly rather than defaulted.
+ * route, and its absence grants nothing: a job that has not been through
+ * `runAsMember` has no context, and `TenantScopedAction` throws without one.
  */
-export function runInJobContext<T>(
-  job: {
-    /** What this work is, for the audit trail. */
-    readonly jobName: string;
-    /** The school the job acts within. */
-    readonly tenantId: string;
-    /** The person the job acts as. Jobs act as somebody, never as nobody. */
-    readonly userId: string;
-    /** Their role, which the access scope will narrow by. */
-    readonly role: Role;
-  },
-  work: () => T,
-): T {
-  if (job.jobName.trim() === '') {
+export function enterVerifiedJobContext<T>(actor: VerifiedJobActor, work: () => T): T {
+  if (actor.jobName.trim() === '') {
     throw new Error('A job context needs a jobName, so an audit line can say what ran.');
   }
 
-  if (!UUID_PATTERN.test(job.tenantId)) {
+  if (!UUID_PATTERN.test(actor.tenantId)) {
     throw new Error('Refusing to open a job context for a non-uuid tenant id.');
   }
 
-  if (!UUID_PATTERN.test(job.userId)) {
+  if (!UUID_PATTERN.test(actor.userId)) {
     throw new Error('Refusing to open a job context for a non-uuid user id.');
   }
 
-  if (toRole(job.role) === undefined) {
+  if (!UUID_PATTERN.test(actor.membershipId)) {
+    throw new Error(
+      'Refusing to open a job context without the membership that verified it. ' +
+        'Use JobContextService.runAsMember.',
+    );
+  }
+
+  if (toRole(actor.role) === undefined) {
     // Fails closed on a role the matrix does not know, exactly as the request
     // path does. A job must not be the way an unrecognised role gets in.
-    throw new Error(
-      `Refusing to open a job context with the unrecognised role "${job.role}". ` +
-        'Jobs act as a known role so the access scope can narrow their reads.',
-    );
+    throw new Error(`Refusing to open a job context with the unrecognised role "${actor.role}".`);
   }
 
   return storage.run(
     {
       origin: 'job',
-      jobName: job.jobName,
-      tenantId: job.tenantId,
-      userId: job.userId,
-      role: job.role,
+      jobName: actor.jobName,
+      tenantId: actor.tenantId,
+      userId: actor.userId,
+      role: actor.role,
       requestId: randomUUID(),
     },
     work,
