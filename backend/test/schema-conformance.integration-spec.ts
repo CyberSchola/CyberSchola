@@ -1,5 +1,10 @@
 import type { DataSource } from 'typeorm';
 
+import {
+  ATTENDANCE_CONTEXTS,
+  ATTENDANCE_STATUSES,
+  ATTENDANCE_TYPES,
+} from '../src/attendance/attendance.enums';
 import { ROLES, Role } from '../src/auth/permission.matrix';
 import { ROLE_TABLES } from '../src/people/role-tables';
 import { createTestDataSource, resetSchema } from './database.setup';
@@ -459,6 +464,83 @@ describe('schema conformance', () => {
       for (const table of Object.values(ROLE_TABLES)) {
         expect(tenantOwnedTables).toContain(table);
       }
+    });
+  });
+  describe('attendance', () => {
+    /**
+     * Blueprint sections 91 and 96, as gates rather than as tests of today's
+     * behaviour. The behaviour has its own suite; these exist so that a future
+     * migration recreating the table, or adding a status on one side only,
+     * fails the build instead of quietly removing a guarantee.
+     */
+    it('holds exactly the AttendanceStatus enum values in the database enum', async () => {
+      const rows = await owner.query<Array<{ value: string }>>(`
+        SELECT unnest(enum_range(NULL::attendance_status_enum))::text AS value
+      `);
+
+      expect(rows.map((row) => row.value).sort()).toEqual([...ATTENDANCE_STATUSES].sort());
+    });
+
+    it('holds exactly the AttendanceType enum values in the database enum', async () => {
+      const rows = await owner.query<Array<{ value: string }>>(`
+        SELECT unnest(enum_range(NULL::attendance_type_enum))::text AS value
+      `);
+
+      expect(rows.map((row) => row.value).sort()).toEqual([...ATTENDANCE_TYPES].sort());
+    });
+
+    it('keeps every context the application knows about in the database type', async () => {
+      const rows = await owner.query<Array<{ value: string }>>(`
+        SELECT unnest(enum_range(NULL::attendance_context_enum))::text AS value
+      `);
+
+      expect(rows.map((row) => row.value).sort()).toEqual([...ATTENDANCE_CONTEXTS].sort());
+    });
+
+    it('still has the trigger that writes the correction trail', async () => {
+      const rows = await owner.query<Array<{ tgname: string }>>(`
+        SELECT tgname FROM pg_trigger
+         WHERE tgrelid = 'attendance'::regclass AND NOT tgisinternal
+      `);
+
+      expect(rows.map((row) => row.tgname)).toContain('record_attendance_correction_trigger');
+    });
+
+    it('still has the trigger that keeps a record inside its term', async () => {
+      const rows = await owner.query<Array<{ tgname: string }>>(`
+        SELECT tgname FROM pg_trigger
+         WHERE tgrelid = 'attendance'::regclass AND NOT tgisinternal
+      `);
+
+      expect(rows.map((row) => row.tgname)).toContain('attendance_within_term_trigger');
+    });
+
+    it('keeps the correction trail append only for the application role', async () => {
+      const [row] = await owner.query<
+        Array<{ insert: boolean; select: boolean; update: boolean; delete: boolean }>
+      >(`
+        SELECT has_table_privilege('cyberschola_app', 'attendance_corrections', 'INSERT') AS insert,
+               has_table_privilege('cyberschola_app', 'attendance_corrections', 'SELECT') AS select,
+               has_table_privilege('cyberschola_app', 'attendance_corrections', 'UPDATE') AS update,
+               has_table_privilege('cyberschola_app', 'attendance_corrections', 'DELETE') AS delete
+      `);
+
+      expect(row).toEqual({ insert: true, select: true, update: false, delete: false });
+    });
+
+    it('keeps one record per person per school day, per kind of person', async () => {
+      const rows = await owner.query<Array<{ indexname: string }>>(`
+        SELECT indexname FROM pg_indexes
+         WHERE tablename = 'attendance' AND indexdef LIKE '%UNIQUE%'
+      `);
+
+      expect(rows.map((row) => row.indexname).sort()).toEqual([
+        'attendance_one_per_staff_school_day',
+        'attendance_one_per_student_school_day',
+        'attendance_one_per_teacher_school_day',
+        'attendance_pkey',
+        'attendance_tenant_id_unique',
+      ]);
     });
   });
 });
