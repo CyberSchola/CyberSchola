@@ -33,26 +33,46 @@ describe('the permission matrix', () => {
       Permission.AcademicManage,
       Permission.StudentRead,
       Permission.PeopleManage,
+      Permission.AttendanceRead,
+      Permission.AttendanceMark,
+      // Correcting a recorded status is the administrator's alone, per blueprint
+      // section 95. A teacher who takes the wrong register asks for it to be
+      // changed, and section 96's trail records who actually changed it.
+      Permission.AttendanceCorrect,
     ],
     [Role.Teacher]: [
       Permission.MembershipRead,
       Permission.SchoolRead,
       Permission.AcademicRead,
       Permission.StudentRead,
+      Permission.AttendanceRead,
+      // Holding this is not the whole rule: which class they may mark is decided
+      // per request, from the classes they supervise this session.
+      Permission.AttendanceMark,
     ],
     [Role.Student]: [
       Permission.MembershipRead,
       Permission.SchoolRead,
       Permission.AcademicRead,
       Permission.StudentRead,
+      Permission.AttendanceRead,
     ],
     [Role.Parent]: [
       Permission.MembershipRead,
       Permission.SchoolRead,
       Permission.AcademicRead,
       Permission.StudentRead,
+      Permission.AttendanceRead,
     ],
-    [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
+    // Staff see and record their own attendance, and nothing about students:
+    // sections 18 and 95.
+    [Role.Staff]: [
+      Permission.MembershipRead,
+      Permission.SchoolRead,
+      Permission.AcademicRead,
+      Permission.AttendanceRead,
+      Permission.AttendanceMark,
+    ],
   };
 
   describe.each(ROLES)('%s', (role) => {

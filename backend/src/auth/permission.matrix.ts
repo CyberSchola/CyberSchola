@@ -66,6 +66,26 @@ export enum Permission {
    * section 12 puts people management under the administrator.
    */
   PeopleManage = 'people.manage',
+  /**
+   * See attendance. Whose is the access scope's question: blueprint section 95
+   * gives an administrator the school, a teacher the students they supervise
+   * plus their own record, a parent their linked children, and a student and a
+   * staff member themselves.
+   */
+  AttendanceRead = 'attendance.read',
+  /**
+   * Record attendance. Section 95 again, and again the endpoint is not the whole
+   * rule: a teacher holding this may still only mark a class they supervise, and
+   * a staff member may only mark themselves. Those are checked per request.
+   */
+  AttendanceMark = 'attendance.mark',
+  /**
+   * Change a recorded status, which section 95 gives to the administrator alone
+   * along with approving corrections. A teacher who takes the wrong register
+   * asks an administrator, and section 96's trail records who actually changed
+   * it and why.
+   */
+  AttendanceCorrect = 'attendance.correct',
 }
 
 /**
@@ -99,26 +119,41 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.AcademicManage,
     Permission.StudentRead,
     Permission.PeopleManage,
+    Permission.AttendanceRead,
+    Permission.AttendanceMark,
+    Permission.AttendanceCorrect,
   ],
   [Role.Teacher]: [
     Permission.MembershipRead,
     Permission.SchoolRead,
     Permission.AcademicRead,
     Permission.StudentRead,
+    Permission.AttendanceRead,
+    Permission.AttendanceMark,
   ],
   [Role.Student]: [
     Permission.MembershipRead,
     Permission.SchoolRead,
     Permission.AcademicRead,
     Permission.StudentRead,
+    Permission.AttendanceRead,
   ],
   [Role.Parent]: [
     Permission.MembershipRead,
     Permission.SchoolRead,
     Permission.AcademicRead,
     Permission.StudentRead,
+    Permission.AttendanceRead,
   ],
-  [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AcademicRead],
+  // Staff mark their own attendance where self check-in is enabled, and see
+  // their own. Section 18 and section 95.
+  [Role.Staff]: [
+    Permission.MembershipRead,
+    Permission.SchoolRead,
+    Permission.AcademicRead,
+    Permission.AttendanceRead,
+    Permission.AttendanceMark,
+  ],
 });
 
 /** Lookup sets, built once. The matrix above stays the readable declaration. */

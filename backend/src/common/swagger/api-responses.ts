@@ -76,6 +76,32 @@ export function ApiItemResponse(
 }
 
 /**
+ * Documents a whole list in the envelope, and sets its success message.
+ *
+ * Not the same as `ApiPageResponse`, and the difference is a decision rather
+ * than a shortcut. A page is a window onto a set that may be larger than the
+ * window, so it carries a total and an offset. These are bounded sets that are
+ * returned whole: the register a request just created, or the corrections made
+ * to one record. Paging them would invite a caller to ask for page two of
+ * something that has no page two.
+ */
+export function ApiListResponse(
+  model: Type<unknown>,
+  message: string,
+  status: HttpStatus = HttpStatus.OK,
+) {
+  return applyDecorators(
+    ResponseMessage(message),
+    ApiExtraModels(model),
+    ApiResponse({
+      status,
+      description: message,
+      schema: envelope({ type: 'array', items: { $ref: getSchemaPath(model) } }, status, message),
+    }),
+  );
+}
+
+/**
  * Documents a success that returns no record, such as a removal, and sets its
  * message. The envelope still arrives, with `data: null`, so every client parses
  * every response the same way.

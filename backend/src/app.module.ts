@@ -10,6 +10,7 @@ import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor';
 
 import { validateEnv } from './config/env.validation';
 import { AcademicsModule } from './academics/academics.module';
+import { AttendanceModule } from './attendance/attendance.module';
 import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
@@ -42,6 +43,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     IdentityModule,
     AcademicsModule,
     PeopleModule,
+    AttendanceModule,
     HealthModule,
   ],
   /**
