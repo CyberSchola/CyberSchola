@@ -58,6 +58,12 @@ Twenty decisions were settled before the first commit and they are binding on th
 
 **Every view runs as its caller.** A Postgres view executes with its owner's privileges by default, and the migration role that owns our views bypasses row-level security. So every view is created `WITH (security_invoker = true)`, and the schema conformance suite fails the build on any that is not.
 
+**A record that must not change silently is guarded by the database, not by a method.** Attendance is one table for students, teachers and staff, and a status on it cannot be changed without a reason: a trigger writes the previous status, the new one, the actor and the reason into `attendance_corrections`, and refuses the update when the transaction carries no reason. The application role holds SELECT and INSERT on that trail and nothing else, so the thing being audited cannot edit its own audit. A service method writing the history row beside the update would have been correct until the second write path existed, and this codebase has already produced three defects of exactly that shape: a guarantee described in a comment that nothing ever enforced.
+
+**A shared table with several kinds of subject still carries real foreign keys.** Attendance names a student, a teacher or a staff member, and the obvious shape, one `user_id` column plus a type, can carry no foreign key at all, which is the hole that lets one school's row point at another school's record. So the subject is three nullable columns, one per kind, each with its own composite key, and a check constraint that exactly one is set and matches the type. Postgres validates a multi-column foreign key only when every column in it is non-null, so the two unused columns cost nothing and the one in use is fully checked.
+
+**Denormalised context is made unfalsifiable rather than merely copied.** A student's attendance carries the class, session and term, because reports group by them and because last year's record must not re-report under this year's class. The foreign key points at the enrolment, through `(tenant_id, enrolment_id, class_id, session_id, student_id)`, so the database can only satisfy it from a real enrolment: a record cannot claim a child was in a class they were never in. The key it references is an existing unique key extended with the columns we want guaranteed, which makes it unique by construction and keeps it clear of the partial indexes that soft delete requires.
+
 ## Layout
 
 ```
@@ -67,7 +73,7 @@ src/
 └── health/          liveness probe
 ```
 
-Modules arrive in dependency order: tenancy, then identity, then the academic spine, then people, then school operations. A module is not started before the relationships underneath it are stable.
+Modules arrive in dependency order: tenancy, then identity, then the academic spine, then people, then school operations. A module is not started before the relationships underneath it are stable. Attendance is the first of the school operations modules, and it sits on all four: a register is recorded against the enrolment that places a child in a class, and who may take or read one is decided by the role rows and the access scopes the people module owns.
 
 ## Contributing
 
