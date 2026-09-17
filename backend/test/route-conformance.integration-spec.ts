@@ -22,7 +22,11 @@ const request: SupertestFn = maybeWrapped.default ?? supertestModule;
 
 import { Controller, Delete, Get, Module, Patch, Post, Put } from '@nestjs/common';
 
+import { Permission } from '../src/auth/permission.matrix';
+import { RequiresPermission } from '../src/auth/requires-permission.decorator';
+
 import { AppModule } from '../src/app.module';
+import { PERMISSIONS } from '../src/auth/permission.matrix';
 import { collectRoutes, type RouteRecord } from '../src/common/testing/route-inventory';
 
 /**
@@ -34,6 +38,9 @@ import { collectRoutes, type RouteRecord } from '../src/common/testing/route-inv
  * controller carries no `@TenantOptional()`, so it is exactly what a real
  * tenant-owned endpoint will look like, and the interceptor must refuse it.
  */
+// Carries a permission as well, so it is shaped like a real tenant-owned
+// endpoint on all three axes rather than only two.
+@RequiresPermission(Permission.MembershipRead)
 @Controller('conformance-probe')
 class ScopedProbeController {
   @Get()
@@ -121,6 +128,14 @@ describe('route conformance', () => {
    * the two decorators separate.
    */
   const ALLOWED_WITHOUT_AUTH = new Set(['GET /health', 'GET /health/ready']);
+
+  /**
+   * Routes any authenticated caller may use, with no permission gating them.
+   *
+   * Shorter still than the list above, and it should stay that way. Health is
+   * absent because it is public, so the permission check never reaches it.
+   */
+  const ALLOWED_WITHOUT_PERMISSION = new Set(['GET /me/schools']);
 
   /** The probe above is not part of the application, so it is excluded. */
   const PROBE_PATH = '/conformance-probe';
@@ -268,6 +283,60 @@ describe('route conformance', () => {
       );
 
       expect(authenticatedButTenantless).toContain('GET /me/schools');
+    });
+  });
+
+  describe('the permission axis', () => {
+    it('leaves no route undeclared', () => {
+      // The third axis, and the same argument as the first two. A route that
+      // declares nothing is refused at runtime by the default-deny branch, so
+      // this does not protect data; it stops someone shipping an endpoint that
+      // is dead on arrival and only discovering it in production.
+      const undeclared = routes
+        .filter(
+          (route) =>
+            !route.isPublic && !route.noPermissionRequired && route.permission === undefined,
+        )
+        .map((route) => `${route.method} ${route.path}`);
+
+      expect(undeclared).toEqual([]);
+    });
+
+    it('covers every route that opts out of permissions', () => {
+      const unlisted = routes
+        .filter((route) => route.noPermissionRequired)
+        .map((route) => `${route.method} ${route.path}`)
+        .filter((signature) => !ALLOWED_WITHOUT_PERMISSION.has(signature));
+
+      expect(unlisted).toEqual([]);
+    });
+
+    it('contains no stale entries', () => {
+      const signatures = new Set(routes.map((route) => `${route.method} ${route.path}`));
+
+      expect([...ALLOWED_WITHOUT_PERMISSION].filter((entry) => !signatures.has(entry))).toEqual([]);
+    });
+
+    it('declares only permissions the matrix knows about', () => {
+      // A typo in a permission string would otherwise be a route nobody can
+      // reach, failing as a 403 that looks like a missing grant.
+      const unknown = routes
+        .map((route) => route.permission)
+        .filter((permission): permission is Permission => permission !== undefined)
+        .filter((permission) => !PERMISSIONS.includes(permission));
+
+      expect(unknown).toEqual([]);
+    });
+
+    it('does not gate a public route behind a permission', () => {
+      // A permission nobody anonymous can hold, on a route anyone may call, is
+      // a contradiction. It would be silently ignored, which is worse than
+      // either behaviour on its own.
+      const contradictory = routes
+        .filter((route) => route.isPublic && route.permission !== undefined)
+        .map((route) => `${route.method} ${route.path}`);
+
+      expect(contradictory).toEqual([]);
     });
   });
 

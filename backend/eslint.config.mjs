@@ -65,4 +65,44 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Only the two verified entry points may open a request or job context.
+    //
+    // A context is what every tenant-scoped action trusts: the school, the actor
+    // and the role. TenantContextInterceptor opens one after verifying the token
+    // and resolving the membership; JobContextService.runAsMember opens one after
+    // reading the membership and role from the database. Any other caller would
+    // be asserting identity without that verification, which review of BE-A02
+    // flagged as the way a future worker or AI job could establish an unverified
+    // tenant context. TypeScript cannot hide an exported function from other
+    // files, so the restriction lives here, and context-entry-points.spec.ts
+    // checks the same thing independently of this configuration.
+    //
+    // Spec files are exempt: a test building a fixture context is setting up a
+    // precondition, not establishing anyone's identity.
+    files: ['src/**/*.ts'],
+    ignores: [
+      'src/**/*.spec.ts',
+      'src/tenancy/request-context.ts',
+      'src/tenancy/tenant-context.interceptor.ts',
+      'src/tenancy/job-context.service.ts',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/request-context', '**/request-context.ts'],
+              importNames: ['runWithRequestContext', 'enterVerifiedJobContext'],
+              message:
+                'Background work must use JobContextService.runAsMember, which verifies the ' +
+                "actor's membership and reads the role from the database. Opening a context " +
+                'directly asserts identity without verification.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

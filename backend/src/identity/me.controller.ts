@@ -3,6 +3,7 @@ import { ApiOkResponse, ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagg
 
 import { ApiSuccessResponseDto } from '../common/dto/api-response.dto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
+import { NoPermissionRequired } from '../auth/requires-permission.decorator';
 import { requireUserId } from '../tenancy/request-context';
 import { TenantOptional } from '../tenancy/tenant-optional.decorator';
 import { MembershipService, type SchoolMembership } from './membership.service';
@@ -43,6 +44,10 @@ export class MeController {
   constructor(private readonly memberships: MembershipService) {}
 
   @Get('schools')
+  // Authenticated, but no permission could sensibly gate reading your own
+  // memberships: there is no role for which the answer should be "not you".
+  // Stated explicitly because the default is to deny.
+  @NoPermissionRequired()
   @ApiOperation({
     summary: 'Schools the signed-in user belongs to',
     description:
