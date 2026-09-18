@@ -1,4 +1,5 @@
-import { SetMetadata } from '@nestjs/common';
+import { applyDecorators, SetMetadata } from '@nestjs/common';
+import { DECORATORS } from '@nestjs/swagger';
 
 export const PUBLIC_KEY = 'auth_public';
 
@@ -23,5 +24,11 @@ export const PUBLIC_KEY = 'auth_public';
  *
  * The conformance suite reads this metadata and holds it to an allow list, so
  * adding it to a route is one line in a diff that a reviewer will be shown.
+ *
+ * It also clears the OpenAPI security requirement, which the document applies
+ * to every operation by default (see `setupSwagger`). An empty `security` list
+ * on an operation is how OpenAPI says "no authentication", so the docs agree
+ * with the guard about which routes need a token, from the same one line.
  */
-export const Public = () => SetMetadata(PUBLIC_KEY, true);
+export const Public = () =>
+  applyDecorators(SetMetadata(PUBLIC_KEY, true), SetMetadata(DECORATORS.API_SECURITY, []));

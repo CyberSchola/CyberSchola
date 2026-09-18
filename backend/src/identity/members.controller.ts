@@ -1,43 +1,12 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import {
-  ApiOkResponse,
-  ApiOperation,
-  ApiProperty,
-  ApiPropertyOptional,
-  ApiTags,
-} from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { ApiOkResponse, ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 
 import { Permission } from '../auth/permission.matrix';
 import { RequiresPermission } from '../auth/requires-permission.decorator';
 import { ApiSuccessResponseDto } from '../common/dto/api-response.dto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
+import { PaginationQueryDto, toPageRequest } from '../common/pagination/pagination';
 import { MembersService, type MemberSummary } from './members.service';
-
-/** Largest page anyone may request. */
-const MAX_LIMIT = 100;
-const DEFAULT_LIMIT = 25;
-
-export class ListMembersQueryDto {
-  @ApiPropertyOptional({ minimum: 1, maximum: MAX_LIMIT, default: DEFAULT_LIMIT })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'limit must be an integer' })
-  @Min(1, { message: `limit must be between 1 and ${MAX_LIMIT}` })
-  // Capped rather than merely defaulted. A default only helps callers who omit
-  // it; a cap is what stops one asking for every member of the largest school
-  // in a single query.
-  @Max(MAX_LIMIT, { message: `limit must be between 1 and ${MAX_LIMIT}` })
-  limit?: number;
-
-  @ApiPropertyOptional({ minimum: 0, default: 0 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'offset must be an integer' })
-  @Min(0, { message: 'offset must be zero or greater' })
-  offset?: number;
-}
 
 export class MemberDto {
   @ApiProperty({ format: 'uuid' })
@@ -104,9 +73,8 @@ export class MembersController {
   })
   @ApiOkResponse({ type: MemberPageResponseDto })
   @ResponseMessage('Members retrieved.')
-  async list(@Query() query: ListMembersQueryDto): Promise<MemberPageDto> {
-    const limit = query.limit ?? DEFAULT_LIMIT;
-    const offset = query.offset ?? 0;
+  async list(@Query() query: PaginationQueryDto): Promise<MemberPageDto> {
+    const { limit, offset } = toPageRequest(query);
 
     const page = await this.members.list(limit, offset);
 

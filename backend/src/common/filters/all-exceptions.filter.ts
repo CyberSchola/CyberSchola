@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { QueryFailedError } from 'typeorm';
 
 import { SYSTEM_MESSAGES } from '../../constants/system.messages';
 import { type ApiErrorResponseDto } from '../dto/api-response.dto';
@@ -53,6 +54,85 @@ const FAILURE_BY_STATUS: ReadonlyMap<number, PublicFailure> = new Map([
     { code: ErrorCode.SERVICE_UNAVAILABLE, message: SYSTEM_MESSAGES.GENERIC.UNAVAILABLE },
   ],
 ]);
+
+/**
+ * How a database constraint violation is presented to the caller.
+ *
+ * Keyed by Postgres SQLSTATE, which is stable across versions and locales,
+ * unlike the message text.
+ *
+ * This matters since the academic spine, which is the first module to rely on
+ * constraints as its intended way of refusing bad input: two overlapping terms,
+ * a duplicate class, a second current session. Those are ordinary mistakes a
+ * school administrator will make, and before this table every one of them
+ * surfaced as a 500, telling the caller the service was broken when in fact it
+ * had done exactly its job.
+ *
+ * The driver's message never reaches the caller. It names constraints, tables
+ * and column values, which is precisely the internal detail rule 1 below exists
+ * to keep in the logs.
+ */
+const FAILURE_BY_SQLSTATE: ReadonlyMap<string, { statusCode: number } & PublicFailure> = new Map([
+  // unique_violation: a live row with that identity already exists.
+  [
+    '23505',
+    {
+      statusCode: HttpStatus.CONFLICT,
+      code: ErrorCode.CONFLICT,
+      message: SYSTEM_MESSAGES.RESOURCE.CONFLICT,
+    },
+  ],
+  // exclusion_violation: dates overlap an existing term or session.
+  [
+    '23P01',
+    {
+      statusCode: HttpStatus.CONFLICT,
+      code: ErrorCode.CONFLICT,
+      message: SYSTEM_MESSAGES.RESOURCE.CONFLICT,
+    },
+  ],
+  // foreign_key_violation: a referenced record does not exist in this school.
+  // 404 rather than 422 on purpose, per decision 6A. Every reference between
+  // tenant-owned tables carries the tenant, so pointing at a record belonging
+  // to another school fails here too, and it must be indistinguishable from
+  // pointing at one that was never created. This codebase soft-deletes rather
+  // than hard-deleting tenant data, so the other cause of this code, deleting a
+  // row something still references, is not reachable through the application.
+  [
+    '23503',
+    {
+      statusCode: HttpStatus.NOT_FOUND,
+      code: ErrorCode.NOT_FOUND,
+      message: SYSTEM_MESSAGES.RESOURCE.NOT_FOUND,
+    },
+  ],
+  // check_violation: including a term outside its session's dates, which is
+  // raised by a trigger with this code so it lands here.
+  [
+    '23514',
+    {
+      statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+      code: ErrorCode.VALIDATION_ERROR,
+      message: SYSTEM_MESSAGES.VALIDATION.FAILED,
+    },
+  ],
+  // not_null_violation: a required field arrived empty past validation.
+  [
+    '23502',
+    {
+      statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+      code: ErrorCode.VALIDATION_ERROR,
+      message: SYSTEM_MESSAGES.VALIDATION.FAILED,
+    },
+  ],
+]);
+
+/** The SQLSTATE of a failed query, if it carries one. */
+function sqlStateOf(exception: { readonly driverError: unknown }): string | undefined {
+  const code = (exception.driverError as { code?: unknown } | undefined)?.code;
+
+  return typeof code === 'string' ? code : undefined;
+}
 
 const CLIENT_FALLBACK: PublicFailure = {
   code: ErrorCode.VALIDATION_ERROR,
@@ -121,6 +201,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ...this.publicFailureFor(statusCode),
         ...this.detailsFromHttpException(exception),
       };
+    }
+
+    // A constraint the database enforced on our behalf. Anything else a query
+    // throws, a syntax error or a lost connection, is still a genuine 500.
+    if (exception instanceof QueryFailedError) {
+      const failure = FAILURE_BY_SQLSTATE.get(sqlStateOf(exception) ?? '');
+
+      if (failure) {
+        return { ...failure };
+      }
     }
 
     return { statusCode: HttpStatus.INTERNAL_SERVER_ERROR, ...SERVER_FALLBACK };
