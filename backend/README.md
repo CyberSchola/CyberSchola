@@ -64,6 +64,8 @@ Twenty decisions were settled before the first commit and they are binding on th
 
 **Denormalised context is made unfalsifiable rather than merely copied.** A student's attendance carries the class, session and term, because reports group by them and because last year's record must not re-report under this year's class. The foreign key points at the enrolment, through `(tenant_id, enrolment_id, class_id, session_id, student_id)`, so the database can only satisfy it from a real enrolment: a record cannot claim a child was in a class they were never in. The key it references is an existing unique key extended with the columns we want guaranteed, which makes it unique by construction and keeps it clear of the partial indexes that soft delete requires.
 
+**A rule that two people can break at once is a constraint, and the friendly check only words it.** A timetable is edited by hand, often by two administrators in the same week, and every clash it must refuse is of the "both saw a free slot" kind: a class with two core lessons in a period, a core lesson beside an elective, a teacher in two rooms at once, two periods overlapping on one day. Each is a unique index or an exclusion constraint on the table, so a race still loses. The service looks for the same clash first only so the 409 can say what is in the way ("Adaeze Okonkwo already teaches JSS 3 B in Tuesday P3"). The teacher is copied onto each lesson because an index cannot see through a join, and a composite foreign key to the class subject with ON UPDATE CASCADE keeps the copy honest: handing a subject to another teacher moves all its lessons in the same statement, or is refused whole if the new teacher is busy then.
+
 ## Layout
 
 ```
@@ -73,7 +75,7 @@ src/
 └── health/          liveness probe
 ```
 
-Modules arrive in dependency order: tenancy, then identity, then the academic spine, then people, then school operations. A module is not started before the relationships underneath it are stable. Attendance is the first of the school operations modules, and it sits on all four: a register is recorded against the enrolment that places a child in a class, and who may take or read one is decided by the role rows and the access scopes the people module owns.
+Modules arrive in dependency order: tenancy, then identity, then the academic spine, then people, then school operations. A module is not started before the relationships underneath it are stable. Attendance is the first of the school operations modules, and it sits on all four: a register is recorded against the enrolment that places a child in a class, and who may take or read one is decided by the role rows and the access scopes the people module owns. Timetables come next, built on the class subjects that say who teaches what, and on the enrolments and elective registrations that say who sits which lesson.
 
 ## Contributing
 
