@@ -40,6 +40,9 @@ export enum Permission {
   SchoolRead = 'school.read',
   /** Change the school's own record. */
   SchoolUpdate = 'school.update',
+  /** Send a message to the AI assistant. Granted to every role: AI-02 has no
+   *  tool/data access yet, so this only gates reaching the model itself. */
+  AiChat = 'ai.chat',
 }
 
 /**
@@ -69,11 +72,12 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.MembershipWrite,
     Permission.SchoolRead,
     Permission.SchoolUpdate,
+    Permission.AiChat,
   ],
-  [Role.Teacher]: [Permission.MembershipRead, Permission.SchoolRead],
-  [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead],
-  [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead],
-  [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead],
+  [Role.Teacher]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
+  [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
+  [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
+  [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
 });
 
 /** Lookup sets, built once. The matrix above stays the readable declaration. */

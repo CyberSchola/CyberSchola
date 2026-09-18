@@ -142,6 +142,18 @@ export class EnvironmentVariables {
   @IsString()
   @Matches(/^https:\/\/.+/, { message: 'SUPABASE_JWKS_URL must be an https:// URL' })
   SUPABASE_JWKS_URL!: string;
+
+  /**
+   * Server-side key for the Groq AI provider.
+   *
+   * Required rather than optional, matching SUPABASE_URL above: the AI module
+   * is registered globally in AppModule, so booting without a key would mean
+   * every AI request fails at call time instead of the process failing at
+   * startup. Never exposed to the client; read only inside GroqProvider.
+   */
+  @IsString()
+  @Matches(/^.+$/, { message: 'GROQ_API_KEY must be set' })
+  GROQ_API_KEY!: string;
 }
 
 /**
@@ -184,6 +196,7 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
       REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: optional(config.REDIS_ALLOW_UNKNOWN_EVICTION_POLICY),
       SUPABASE_URL: config.SUPABASE_URL,
       SUPABASE_JWKS_URL: config.SUPABASE_JWKS_URL,
+      GROQ_API_KEY: config.GROQ_API_KEY,
     },
     { enableImplicitConversion: true },
   );

@@ -19,6 +19,7 @@ const VALID = {
   REDIS_URL: 'redis://localhost:6379',
   SUPABASE_URL: 'https://project.supabase.co',
   SUPABASE_JWKS_URL: 'https://project.supabase.co/auth/v1/.well-known/jwks.json',
+  GROQ_API_KEY: 'gsk_test_key',
 } as const;
 
 const withEnv = (overrides: Record<string, unknown> = {}) => ({ ...VALID, ...overrides });

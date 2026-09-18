@@ -2,6 +2,7 @@ import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 
+import { AiModule } from './ai/ai.module';
 import { AuthGuard } from './auth/auth.guard';
 import { PermissionInterceptor } from './auth/permission.interceptor';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -39,6 +40,7 @@ import { TenancyModule } from './tenancy/tenancy.module';
     TenancyModule,
     IdentityModule,
     HealthModule,
+    AiModule,
   ],
   /**
    * The HTTP contract, bound to the module rather than to the bootstrap file.

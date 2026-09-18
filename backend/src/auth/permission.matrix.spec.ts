@@ -27,11 +27,12 @@ describe('the permission matrix', () => {
       Permission.MembershipWrite,
       Permission.SchoolRead,
       Permission.SchoolUpdate,
+      Permission.AiChat,
     ],
-    [Role.Teacher]: [Permission.MembershipRead, Permission.SchoolRead],
-    [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead],
-    [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead],
-    [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead],
+    [Role.Teacher]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
+    [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
+    [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
+    [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
   };
 
   describe.each(ROLES)('%s', (role) => {
