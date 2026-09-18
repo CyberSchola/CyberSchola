@@ -37,9 +37,10 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * Resolved by the trigger from the session's user, against the memberships of
  * the school that owns the row, so it is the same kind of identity as
- * `marked_by` and cannot be supplied by the caller at all. A correction by
- * someone who is not a member of that school has nothing to record and is
- * refused.
+ * `marked_by` and cannot be supplied by the caller at all. Only a live, active
+ * membership counts. A correction by someone who is not a member of that school,
+ * or whose membership is suspended or removed, has nobody to attribute it to and
+ * is refused.
  *
  * ## Append only
  *
@@ -118,16 +119,22 @@ export class CreateAttendanceCorrections1757800100000 implements MigrationInterf
             USING ERRCODE = '23514';
         END IF;
 
+        -- Live and active, the same lifecycle every other path follows. The
+        -- actor recorded in changed_by has to be someone the school currently
+        -- recognises, or the trail would attribute a change to a person the
+        -- school had already switched off.
         SELECT id INTO actor_membership
           FROM memberships
          WHERE tenant_id = OLD.tenant_id
            AND user_id = current_user_id()
            AND deleted_at IS NULL
+           AND status = 'ACTIVE'
          LIMIT 1;
 
         IF actor_membership IS NULL THEN
           RAISE EXCEPTION
-            'Attendance can only be corrected by a member of the school that owns the record.'
+            'Attendance can only be corrected by an active member of the school that owns '
+            'the record.'
             USING ERRCODE = '23514';
         END IF;
 

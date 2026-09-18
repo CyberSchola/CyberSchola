@@ -219,4 +219,34 @@ describe('attendance corrections', () => {
       }),
     ).rejects.toThrow(/outside its term/i);
   });
+  describe('who the trail can attribute a change to', () => {
+    it('refuses a correction by a member whose membership is suspended', async () => {
+      // A suspended member cannot reach the API, but the trigger is the guarantee
+      // for every path, so it must not attribute a change to someone the school
+      // has switched off.
+      const user = '40000000-0000-4000-8000-000000000021';
+      await seedMember(owner, SCHOOL, user, [Role.SchoolAdmin], { status: 'SUSPENDED' });
+      const id = await freshRecord('2026-09-08');
+
+      await expect(
+        asApp(user, async (manager) => {
+          await manager.query(`SELECT set_config('app.attendance_reason', $1, true)`, ['Why.']);
+          await manager.query(`UPDATE attendance SET status = 'ABSENT' WHERE id = $1`, [id]);
+        }),
+      ).rejects.toThrow(/active member of the school/i);
+    });
+
+    it('refuses a correction by a member whose membership has been removed', async () => {
+      const user = '40000000-0000-4000-8000-000000000022';
+      await seedMember(owner, SCHOOL, user, [], { deleted: true });
+      const id = await freshRecord('2026-09-07');
+
+      await expect(
+        asApp(user, async (manager) => {
+          await manager.query(`SELECT set_config('app.attendance_reason', $1, true)`, ['Why.']);
+          await manager.query(`UPDATE attendance SET status = 'ABSENT' WHERE id = $1`, [id]);
+        }),
+      ).rejects.toThrow(/active member of the school/i);
+    });
+  });
 });
