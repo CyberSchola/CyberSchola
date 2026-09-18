@@ -5,7 +5,6 @@ import { TenantScopedAction } from '../common/actions/tenant-scoped.action';
 import type { Page, PageRequest } from '../common/pagination/pagination';
 import { attendanceScope } from './attendance-access.scope';
 import type { AttendanceStatus, AttendanceType } from './attendance.enums';
-import { AttendanceCorrection } from './entities/attendance-correction.entity';
 import { Attendance } from './entities/attendance.entity';
 
 /** Narrowing a caller asked for, on top of the narrowing their roles impose. */
@@ -68,21 +67,6 @@ export class ReadAttendanceAction extends TenantScopedAction<Attendance> {
     return this.scopedQuery('attendance')
       .andWhere('attendance.id = :__attendanceId', { __attendanceId: id })
       .getOne();
-  }
-
-  /**
-   * The correction history of a record, newest first.
-   *
-   * Reached only through a record the caller can already see, so the visibility
-   * rule is stated once. The corrections table has no scope of its own for that
-   * reason, and a query against it that did not start here would be a way around
-   * one.
-   */
-  async correctionsFor(attendanceId: string): Promise<AttendanceCorrection[]> {
-    return this.manager.find(AttendanceCorrection, {
-      where: { tenantId: this.tenantId, attendanceId },
-      order: { changedAt: 'DESC' },
-    });
   }
 
   /**

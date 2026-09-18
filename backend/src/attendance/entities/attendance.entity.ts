@@ -70,7 +70,7 @@ export class Attendance extends TenantOwnedEntity {
    *
    * A membership rather than a user id, so the marker is a member of this school
    * by construction. Corrections do not change it: it stays the record of who
-   * took the register, and `attendance_corrections` holds who changed it after.
+   * took the register, and the correction trail holds who changed it after.
    */
   @Column({ type: 'uuid', name: 'marked_by' })
   markedBy!: string;

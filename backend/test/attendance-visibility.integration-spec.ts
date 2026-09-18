@@ -1,6 +1,7 @@
 import { DataSource } from 'typeorm';
 
 import { AttendanceStatus, AttendanceType } from '../src/attendance/attendance.enums';
+import { ReadAttendanceCorrectionsAction } from '../src/attendance/read-attendance-corrections.action';
 import { ReadAttendanceAction } from '../src/attendance/read-attendance.action';
 import { Role } from '../src/auth/permission.matrix';
 import { rolesOfMembership } from '../src/tenancy/membership-roles';
@@ -214,6 +215,25 @@ describe('attendance visibility', () => {
       sessionId: otherYear.sessionId,
       termId: otherYear.termId,
     });
+
+    // Every record gets one correction, written the only way the trail can be:
+    // by the trigger, from an update that carries a reason, attributed to that
+    // school's administrator. The history matrix below then asks who can see it.
+    for (const name of RECORDS) {
+      const other = name === 'otherSchoolDay';
+
+      await owner.transaction(async (manager) => {
+        await manager.query(`SELECT set_config('app.current_user', $1, true)`, [
+          other ? userIds.otherSchoolAdmin : userIds.admin,
+        ]);
+        await manager.query(
+          `SELECT set_config('app.attendance_reason', 'Seeded correction', true)`,
+        );
+        await manager.query(`UPDATE attendance SET status = 'ABSENT' WHERE id = $1`, [
+          recordIds[name],
+        ]);
+      });
+    }
   }, 180_000);
 
   afterAll(async () => {
@@ -248,9 +268,52 @@ describe('attendance visibility', () => {
     return RECORDS.filter((name) => seen.has(recordIds[name]));
   }
 
+  /** Every record whose correction history one caller can read, named. */
+  async function historyVisibleTo(caller: Caller): Promise<Row[]> {
+    const userId = userIds[caller];
+    const tenantId = schoolOf(caller);
+
+    const roles = await app.transaction(async (manager) => {
+      await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId]);
+
+      return rolesOfMembership(manager, tenantId, memberships[caller]);
+    });
+
+    return runWithRequestContext(
+      { origin: 'http', tenantId, userId, roles, requestId: 'correction-matrix' },
+      () =>
+        app.transaction(async (manager) => {
+          await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId]);
+          await manager.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+
+          const history = new ReadAttendanceCorrectionsAction(manager);
+          const seen: Row[] = [];
+
+          for (const name of RECORDS) {
+            if ((await history.forRecord(recordIds[name])).length > 0) {
+              seen.push(name);
+            }
+          }
+
+          return seen;
+        }),
+    );
+  }
+
   it.each(CALLERS)('%s sees exactly the records section 95 allows', async (caller) => {
     expect((await visibleTo(caller)).sort()).toEqual([...EXPECTED[caller]].sort());
   });
+
+  it.each(CALLERS)(
+    '%s reads the correction history of exactly the records it may read',
+    async (caller) => {
+      // The invariant review of BE-AT01 asked for, asked of the primitive rather
+      // than the endpoint: history is visible where the record is, and nowhere
+      // else. Every record has a correction, so an empty answer here is the scope
+      // refusing, not the history being empty.
+      expect((await historyVisibleTo(caller)).sort()).toEqual([...EXPECTED[caller]].sort());
+    },
+  );
 
   it('counts only what the caller may see, so paging cannot walk the boundary', async () => {
     const userId = userIds.parent;

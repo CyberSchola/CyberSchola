@@ -24,6 +24,7 @@ import type { AttendanceCorrection } from './entities/attendance-correction.enti
 import type { Attendance } from './entities/attendance.entity';
 import { MarkAttendanceAction } from './mark-attendance.action';
 import { type AttendanceFilter, ReadAttendanceAction } from './read-attendance.action';
+import { ReadAttendanceCorrectionsAction } from './read-attendance-corrections.action';
 
 /** Why a register cannot be taken twice. Shared with the route's documentation. */
 export const ALREADY_MARKED_MESSAGE =
@@ -222,11 +223,15 @@ export class AttendanceService {
   /** The changes made to a record, newest first. */
   corrections(id: string): Promise<AttendanceCorrectionDto[]> {
     return this.inSchool(async (manager) => {
-      const reading = new ReadAttendanceAction(manager);
+      // A 404 for a record this caller may not see, so the answer does not say
+      // whether a record exists. The history itself then comes from an action
+      // whose own scope requires the record to be visible, so this check is a
+      // courtesy and not the boundary.
+      await this.visible(new ReadAttendanceAction(manager), id);
 
-      await this.visible(reading, id);
-
-      return (await reading.correctionsFor(id)).map(toCorrectionDto);
+      return (await new ReadAttendanceCorrectionsAction(manager).forRecord(id)).map(
+        toCorrectionDto,
+      );
     });
   }
 

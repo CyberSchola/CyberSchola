@@ -522,6 +522,31 @@ describe('attendance end to end', () => {
       });
     });
 
+    it('refuses the history of a record the caller may not read, as a 404', async () => {
+      // pupilTwo's record was corrected above. The parent is not theirs, and the
+      // other teacher does not take their class: neither may read the record, so
+      // neither may read what was changed on it, and neither learns it exists.
+      const [record] = await e2e.owner.query<Array<{ id: string }>>(
+        `SELECT id FROM attendance WHERE student_id = $1 AND date = $2::date`,
+        [a.pupilTwo, SCHOOL_DAY],
+      );
+
+      for (const caller of [users.parentA, users.otherTeacherA, users.studentA]) {
+        await request(e2e.server())
+          .get(`/api/v1/attendance/${record.id}/corrections`)
+          .set(await as(caller))
+          .expect(404);
+      }
+
+      // And the teacher who takes that class still can, so the 404 is about reach.
+      const allowed = await request(e2e.server())
+        .get(`/api/v1/attendance/${record.id}/corrections`)
+        .set(await as(users.teacherA))
+        .expect(200);
+
+      expect(data<unknown[]>(allowed)).toHaveLength(1);
+    });
+
     it('refuses a teacher the correction endpoint, per section 95', async () => {
       await request(e2e.server())
         .post(`/api/v1/attendance/${a.seededRecord}/corrections`)
