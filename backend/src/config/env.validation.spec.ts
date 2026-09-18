@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { NodeEnv, validateEnv } from './env.validation';
+import { corsOrigins, NodeEnv, validateEnv } from './env.validation';
 
 /**
  * The minimum environment a process needs to boot.
@@ -261,6 +261,68 @@ describe('validateEnv', () => {
       expect(validateEnv(withEnv()).SUPABASE_URL).toBe('https://project.supabase.co');
     });
   });
+  describe('CORS_ORIGINS', () => {
+    it('is absent by default, which enables no cross-origin access', () => {
+      expect(corsOrigins(validateEnv(withEnv()).CORS_ORIGINS)).toEqual([]);
+    });
+
+    it('accepts exact origins, with or without a port', () => {
+      const value = 'https://app.example.com,http://localhost:3001';
+
+      expect(corsOrigins(validateEnv(withEnv({ CORS_ORIGINS: value })).CORS_ORIGINS)).toEqual([
+        'https://app.example.com',
+        'http://localhost:3001',
+      ]);
+    });
+
+    it.each([
+      ['a wildcard', '*'],
+      ['a wildcard subdomain', 'https://*.example.com'],
+      ['a path', 'https://app.example.com/login'],
+      ['a trailing slash', 'https://app.example.com/'],
+      ['a space after the comma', 'https://a.example.com, https://b.example.com'],
+      ['no scheme', 'app.example.com'],
+    ])('refuses %s', (_label, value) => {
+      expect(() => validateEnv(withEnv({ CORS_ORIGINS: value }))).toThrow(/CORS_ORIGINS/);
+    });
+  });
+
+  describe('who production trusts to issue tokens', () => {
+    const DEMO_ISSUER = {
+      SUPABASE_URL: 'https://api-cyberschola.example.com/demo-auth',
+      SUPABASE_JWKS_URL: 'https://api-cyberschola.example.com/demo-auth/jwks.json',
+    };
+
+    it('lets staging trust its own demo issuer', () => {
+      expect(() => validateEnv(withEnv({ NODE_ENV: 'staging', ...DEMO_ISSUER }))).not.toThrow();
+    });
+
+    it('refuses to boot production with any issuer that is not a Supabase project', () => {
+      expect(() => validateEnv(withEnv({ NODE_ENV: 'production', ...DEMO_ISSUER }))).toThrow(
+        /In production, SUPABASE_URL must be a Supabase project URL/,
+      );
+    });
+
+    it('checks the keys as well as the issuer, so they cannot be split', () => {
+      expect(() =>
+        validateEnv(
+          withEnv({
+            NODE_ENV: 'production',
+            SUPABASE_JWKS_URL: DEMO_ISSUER.SUPABASE_JWKS_URL,
+          }),
+        ),
+      ).toThrow(/In production, SUPABASE_JWKS_URL must be a Supabase project URL/);
+    });
+
+    it('refuses a lookalike host that merely contains supabase.co', () => {
+      expect(() =>
+        validateEnv(
+          withEnv({ NODE_ENV: 'production', SUPABASE_URL: 'https://x.supabase.co.evil.example' }),
+        ),
+      ).toThrow(/SUPABASE_URL/);
+    });
+  });
+
   describe('.env.example is the backend configuration contract', () => {
     /**
      * Variables the example documents but the backend never reads.
