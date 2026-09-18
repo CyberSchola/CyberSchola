@@ -1,7 +1,10 @@
 import { DataSource, type EntityManager } from 'typeorm';
 
 import { AttendanceStatus, AttendanceType } from '../src/attendance/attendance.enums';
+import type { Attendance } from '../src/attendance/entities/attendance.entity';
+import { ReadAttendanceAction } from '../src/attendance/read-attendance.action';
 import { Role } from '../src/auth/permission.matrix';
+import { runWithRequestContext } from '../src/tenancy/request-context';
 import { seedAcademicYear, seedAttendance, seedClass, SCHOOL_DAY } from './attendance.fixtures';
 import { APP_ROLE_PASSWORD } from './app-database.env';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
@@ -247,6 +250,89 @@ describe('attendance corrections', () => {
           await manager.query(`UPDATE attendance SET status = 'ABSENT' WHERE id = $1`, [id]);
         }),
       ).rejects.toThrow(/active member of the school/i);
+    });
+  });
+
+  describe('the reason, which lives on the transaction', () => {
+    /**
+     * Runs work the way a request does: inside a request context, in one
+     * transaction, with the user and the school set on it.
+     */
+    function asRequest<T>(
+      work: (reading: ReadAttendanceAction, manager: EntityManager) => Promise<T>,
+    ): Promise<T> {
+      return runWithRequestContext(
+        {
+          origin: 'http',
+          tenantId: SCHOOL,
+          userId: ADMIN_USER,
+          roles: [Role.SchoolAdmin],
+          requestId: 'reason-isolation',
+        },
+        () =>
+          app.transaction(async (manager) => {
+            await manager.query(`SELECT set_config('app.current_user', $1, true)`, [ADMIN_USER]);
+            await manager.query(`SELECT set_config('app.current_tenant', $1, true)`, [SCHOOL]);
+
+            return work(new ReadAttendanceAction(manager), manager);
+          }),
+      );
+    }
+
+    async function load(reading: ReadAttendanceAction, id: string): Promise<Attendance> {
+      const record = await reading.findVisible(id);
+
+      if (record === null) {
+        throw new Error(`record ${id} is not visible to the administrator`);
+      }
+
+      return record;
+    }
+
+    async function reasonsFor(id: string): Promise<string[]> {
+      const rows = await owner.query<Array<{ reason: string }>>(
+        `SELECT reason FROM attendance_corrections WHERE attendance_id = $1`,
+        [id],
+      );
+
+      return rows.map((row) => row.reason);
+    }
+
+    it('gives two corrections in one transaction each their own reason', async () => {
+      const first = await freshRecord('2026-09-04');
+      const second = await freshRecord('2026-09-03');
+
+      await asRequest(async (reading) => {
+        await reading.correct(await load(reading, first), AttendanceStatus.Absent, 'Reason A');
+        await reading.correct(await load(reading, second), AttendanceStatus.Late, 'Reason B');
+      });
+
+      expect(await reasonsFor(first)).toEqual(['Reason A']);
+      expect(await reasonsFor(second)).toEqual(['Reason B']);
+    });
+
+    it('leaves no reason behind for a later change in the same transaction', async () => {
+      // The case the cleanup exists for. Without it, this second update would
+      // inherit "Reason C" and record a change nobody gave a reason for. The
+      // first test above would still pass without the cleanup, because each
+      // correction sets its own reason; this is the one that fails.
+      const corrected = await freshRecord('2026-09-02');
+      const untouched = await freshRecord('2026-09-01');
+
+      await expect(
+        asRequest(async (reading, manager) => {
+          await reading.correct(
+            await load(reading, corrected),
+            AttendanceStatus.Absent,
+            'Reason C',
+          );
+          await manager.query(`UPDATE attendance SET status = 'SICK' WHERE id = $1`, [untouched]);
+        }),
+      ).rejects.toThrow(/without a reason/i);
+
+      // Refused, and the whole transaction with it: neither record changed.
+      expect(await reasonsFor(corrected)).toEqual([]);
+      expect(await reasonsFor(untouched)).toEqual([]);
     });
   });
 });
