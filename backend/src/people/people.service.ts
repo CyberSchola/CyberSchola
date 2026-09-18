@@ -6,9 +6,10 @@ import type { TenantOwnedEntity } from '../common/entities/tenant-owned.entity';
 import {
   ResourceConflictException,
   ResourceNotFoundException,
+  ValidationFailedException,
 } from '../common/exceptions/app.exception';
 import type { Page, PageRequest } from '../common/pagination/pagination';
-import { Membership } from '../identity/membership.entity';
+import { Membership, MembershipStatus } from '../identity/membership.entity';
 import { requireTenantId, requireUserId } from '../tenancy/request-context';
 import { TenantTransactionService } from '../tenancy/tenant-transaction.service';
 import { Guardianship, GuardianRelationship } from './entities/guardianship.entity';
@@ -27,6 +28,18 @@ import type {
   StudentDto,
   TeacherDto,
 } from './people.dto';
+
+/**
+ * Why a suspended membership cannot be given a role. Shared with the routes' documentation.
+ *
+ * Membership status is authoritative: a role row describes what a person is in the
+ * school, and status says whether that membership may be used at all. Granting a
+ * role to a suspended one would create a participant that looks current attached
+ * to a person the school has switched off. The database refuses it too, through a
+ * trigger on every role table; this check is what turns that into a readable 422.
+ */
+export const ROLE_REQUIRES_ACTIVE_MEMBERSHIP =
+  'That membership is suspended. Reactivate it before giving it a role in this school.';
 
 /** Why the last administrator cannot be removed. Shared with the route's documentation. */
 export const LAST_ADMINISTRATOR_MESSAGE =
@@ -206,7 +219,8 @@ export class PeopleService {
    * another school is not found and the answer is 404. A membership already
    * linked to a live record of this kind violates the one-per-membership index
    * and the answer is 409. Replacing an existing link on this record is allowed:
-   * it is how a mistaken link is corrected.
+   * it is how a mistaken link is corrected. A suspended membership is refused:
+   * linking is granting a role, and a role is only granted to an active member.
    */
   linkAccount<TEntity extends LinkableRecord, TDto>(
     kind: PersonKind<TEntity, TDto>,
@@ -221,6 +235,8 @@ export class PeopleService {
       if (!record || !membership) {
         throw new ResourceNotFoundException();
       }
+
+      assertActive(membership);
 
       record.membershipId = membership.id;
 
@@ -258,7 +274,13 @@ export class PeopleService {
     });
   }
 
-  /** Makes a member of this school an administrator. */
+  /**
+   * Makes a member of this school an administrator.
+   *
+   * Live, then active, then granted. A removed membership is hidden from the
+   * lookup by its delete column, so it is a 404 like an id never issued; a
+   * suspended one exists and is refused with a 422 saying so.
+   */
   addAdmin(membershipId: string): Promise<SchoolAdminDto> {
     return this.inSchool(async (manager) => {
       const membership = await manager.findOne(Membership, { where: { id: membershipId } });
@@ -266,6 +288,8 @@ export class PeopleService {
       if (!membership) {
         throw new ResourceNotFoundException();
       }
+
+      assertActive(membership);
 
       const created = await new RecordAction(manager, SchoolAdmin, 'admin').create({
         membershipId: membership.id,
@@ -408,3 +432,15 @@ const toGuardianshipDto = (row: Guardianship): GuardianshipDto => ({
   studentId: row.studentId,
   relationship: row.relationship,
 });
+
+/**
+ * Refuses a membership that may not be given a role.
+ *
+ * Only status is checked here. A removed membership never reaches this point,
+ * because the entity's delete column hides it from the lookup that precedes it.
+ */
+function assertActive(membership: Membership): void {
+  if (membership.status !== MembershipStatus.Active) {
+    throw new ValidationFailedException([ROLE_REQUIRES_ACTIVE_MEMBERSHIP]);
+  }
+}
