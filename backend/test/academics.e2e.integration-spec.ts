@@ -12,6 +12,7 @@ import { DataSource } from 'typeorm';
 // conformance suite imports it this way.
 import * as supertestModule from 'supertest';
 
+import { ANCHOR_REQUIRES_ACTIVE_MEMBERSHIP } from '../src/academics/academics.service';
 import { AppModule } from '../src/app.module';
 import { SupabaseTokenVerifier } from '../src/auth/token-verifier';
 import { createTestDataSource, resetSchema } from './database.setup';
@@ -58,6 +59,11 @@ describe('academics end to end', () => {
   } as const;
 
   const studentIds: Record<'student' | 'otherStudent', string> = { student: '', otherStudent: '' };
+  /** Memberships with no anchor yet, for the anchor lifecycle cases. */
+  const unanchored = {} as Record<
+    'suspendedStudent' | 'suspendedTeacher' | 'activeStudent',
+    string
+  >;
   let session: string;
   let grade: string;
 
@@ -123,6 +129,19 @@ describe('academics end to end', () => {
     const studentMembership = await membership(SCHOOL, users.student, 'STUDENT');
     const otherStudentMembership = await membership(SCHOOL, users.otherStudent, 'STUDENT');
     await membership(OTHER_SCHOOL, users.otherSchoolAdmin, 'SCHOOL_ADMIN');
+
+    // Not anchored yet. Two are suspended, which anchoring must refuse; the
+    // active one is the control, proving the refusal is about status and not
+    // about anchoring in general.
+    const unanchoredMembership = (role: string, status: 'ACTIVE' | 'SUSPENDED') =>
+      ownerInsert(
+        `INSERT INTO memberships (tenant_id, user_id, role, status)
+         VALUES ($1, gen_random_uuid(), $2, $3) RETURNING id`,
+        [SCHOOL, role, status],
+      );
+    unanchored.suspendedStudent = await unanchoredMembership('STUDENT', 'SUSPENDED');
+    unanchored.suspendedTeacher = await unanchoredMembership('TEACHER', 'SUSPENDED');
+    unanchored.activeStudent = await unanchoredMembership('STUDENT', 'ACTIVE');
 
     const teacher = await ownerInsert(
       `INSERT INTO teachers (tenant_id, membership_id) VALUES ($1, $2) RETURNING id`,
@@ -360,6 +379,61 @@ describe('academics end to end', () => {
         .set('authorization', await asUser(users.otherSchoolAdmin))
         .send({ classId: classes[0]?.id, studentId: studentIds.student })
         .expect(404);
+    });
+  });
+  describe('anchoring a membership as a student or a teacher', () => {
+    /** Anchor rows for a membership, read as the owner, so nothing is hidden. */
+    async function anchorsFor(table: 'students' | 'teachers', membershipId: string) {
+      return owner.query<unknown[]>(`SELECT 1 FROM ${table} WHERE membership_id = $1`, [
+        membershipId,
+      ]);
+    }
+
+    it('refuses a suspended membership as a student, and writes nothing', async () => {
+      const response = await request(server())
+        .post('/api/v1/students')
+        .set('authorization', await asUser(users.admin))
+        .send({ membershipId: unanchored.suspendedStudent })
+        .expect(422);
+
+      expect(body<{ details: string[] }>(response).details).toEqual([
+        ANCHOR_REQUIRES_ACTIVE_MEMBERSHIP,
+      ]);
+      expect(await anchorsFor('students', unanchored.suspendedStudent)).toHaveLength(0);
+    });
+
+    it('refuses a suspended membership as a teacher, and writes nothing', async () => {
+      await request(server())
+        .post('/api/v1/teachers')
+        .set('authorization', await asUser(users.admin))
+        .send({ membershipId: unanchored.suspendedTeacher })
+        .expect(422);
+
+      expect(await anchorsFor('teachers', unanchored.suspendedTeacher)).toHaveLength(0);
+    });
+
+    it('checks status before role, so a suspended membership is told why', async () => {
+      // A suspended TEACHER membership offered as a student is wrong twice. The
+      // status is reported, because reactivating is the first thing to fix.
+      const response = await request(server())
+        .post('/api/v1/students')
+        .set('authorization', await asUser(users.admin))
+        .send({ membershipId: unanchored.suspendedTeacher })
+        .expect(422);
+
+      expect(body<{ details: string[] }>(response).details).toEqual([
+        ANCHOR_REQUIRES_ACTIVE_MEMBERSHIP,
+      ]);
+    });
+
+    it('still anchors an active membership, so the refusal is about status alone', async () => {
+      await request(server())
+        .post('/api/v1/students')
+        .set('authorization', await asUser(users.admin))
+        .send({ membershipId: unanchored.activeStudent })
+        .expect(201);
+
+      expect(await anchorsFor('students', unanchored.activeStudent)).toHaveLength(1);
     });
   });
 });

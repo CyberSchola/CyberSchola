@@ -57,7 +57,10 @@ export class PeopleAssignmentsController {
   @RequiresPermission(Permission.AcademicManage)
   @ApiOperation({
     summary: 'Anchor a membership as a student',
-    description: 'The membership must hold the STUDENT role (422 otherwise).',
+    description:
+      'The membership must be active and hold the STUDENT role, or the request is a 422. ' +
+      'A suspended membership is refused rather than anchored, because membership status ' +
+      'decides whether a person is current, not the anchor.',
   })
   @ApiItemResponse(PersonAnchorDto, 'Student created.', HttpStatus.CREATED)
   @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
@@ -65,7 +68,7 @@ export class PeopleAssignmentsController {
   @ApiErrorResponse(HttpStatus.CONFLICT, 'This membership is already a student.')
   @ApiErrorResponse(
     HttpStatus.UNPROCESSABLE_ENTITY,
-    'The membership does not hold the STUDENT role.',
+    'The membership is suspended, or does not hold the STUDENT role.',
   )
   createStudent(@Body() input: CreatePersonAnchorDto): Promise<PersonAnchorDto> {
     return this.academics.createStudent(input.membershipId);
@@ -75,7 +78,10 @@ export class PeopleAssignmentsController {
   @RequiresPermission(Permission.AcademicManage)
   @ApiOperation({
     summary: 'Anchor a membership as a teacher',
-    description: 'The membership must hold the TEACHER role (422 otherwise).',
+    description:
+      'The membership must be active and hold the TEACHER role, or the request is a 422. ' +
+      'A suspended membership is refused rather than anchored, because membership status ' +
+      'decides whether a person is current, not the anchor.',
   })
   @ApiItemResponse(PersonAnchorDto, 'Teacher created.', HttpStatus.CREATED)
   @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
@@ -83,7 +89,7 @@ export class PeopleAssignmentsController {
   @ApiErrorResponse(HttpStatus.CONFLICT, 'This membership is already a teacher.')
   @ApiErrorResponse(
     HttpStatus.UNPROCESSABLE_ENTITY,
-    'The membership does not hold the TEACHER role.',
+    'The membership is suspended, or does not hold the TEACHER role.',
   )
   createTeacher(@Body() input: CreatePersonAnchorDto): Promise<PersonAnchorDto> {
     return this.academics.createTeacher(input.membershipId);

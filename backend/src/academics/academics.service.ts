@@ -8,7 +8,7 @@ import {
 } from '../common/exceptions/app.exception';
 import type { TenantOwnedEntity } from '../common/entities/tenant-owned.entity';
 import type { Page, PageRequest } from '../common/pagination/pagination';
-import { Membership } from '../identity/membership.entity';
+import { Membership, MembershipStatus } from '../identity/membership.entity';
 import { requireTenantId, requireUserId } from '../tenancy/request-context';
 import { TenantTransactionService } from '../tenancy/tenant-transaction.service';
 import type {
@@ -45,6 +45,10 @@ import { Teacher } from './entities/teacher.entity';
 import { Term } from './entities/term.entity';
 import { ListStudentsAction } from './list-students.action';
 import { RecordAction } from './record.action';
+
+/** Why a suspended membership cannot be anchored. Shared with the route's documentation. */
+export const ANCHOR_REQUIRES_ACTIVE_MEMBERSHIP =
+  'That membership is suspended. Reactivate it before making it a student or a teacher.';
 
 /**
  * The academic spine: structure, assignments, and the students a caller may see.
@@ -280,7 +284,16 @@ export class AcademicsService {
   }
 
   /**
-   * Anchors a membership as a student or a teacher, after checking its role.
+   * Anchors a membership as a student or a teacher, after checking it is live,
+   * active and holds the matching role, in that order.
+   *
+   * Active because membership status is authoritative. A suspended membership
+   * cannot resolve into the school, so anchoring one grants nothing today, but it
+   * would leave an academic participant that looks current attached to a person
+   * the school has switched off, and every later check would have to compensate.
+   * The anchor is not a second source of truth about whether someone is active.
+   * A removed membership never gets this far: the entity's delete column hides it
+   * from the lookup, so it is a 404 like an id that was never issued.
    *
    * The role is checked here rather than by a foreign key on purpose. BE-A01
    * allows one role per membership, so a teacher who is also a parent cannot be
@@ -298,6 +311,10 @@ export class AcademicsService {
 
       if (!membership) {
         throw new ResourceNotFoundException();
+      }
+
+      if (membership.status !== MembershipStatus.Active) {
+        throw new ValidationFailedException([ANCHOR_REQUIRES_ACTIVE_MEMBERSHIP]);
       }
 
       if (membership.role !== expected) {
