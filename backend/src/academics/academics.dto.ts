@@ -146,6 +146,18 @@ export class CreateClassSubjectDto {
 }
 
 /**
+ * Hands a class subject to another teacher.
+ *
+ * Only the teacher. The class, the subject and whether it is an elective are what
+ * make it this class subject; changing any of them is a different one.
+ */
+export class ReassignClassSubjectDto {
+  @ApiProperty({ format: 'uuid', description: 'The teacher who takes the subject over.' })
+  @IsUUID('4')
+  teacherId!: string;
+}
+
+/**
  * Enrols a student in a class.
  *
  * There is deliberately no `sessionId` here. The enrolment takes the class's own
