@@ -5,6 +5,7 @@ import { AttendanceStatus, AttendanceType } from './attendance.enums';
 import type { Attendance } from './entities/attendance.entity';
 import { ReadAttendanceAction } from './read-attendance.action';
 import {
+  assertCalendarDate,
   calendarRange,
   type DateRange,
   isCalendarPeriod,
@@ -85,14 +86,19 @@ export class ReportAttendanceAction extends ReadAttendanceAction {
    * TERM and SESSION are found by date in any session, not only the current
    * one, so last term can still be reported. A date no term or session covers
    * is a 422, the same answer marking gives for a date in the holidays.
+   *
+   * A date that is not on the calendar is a 422 for every period, refused here
+   * before anything is resolved, so it never reaches the TERM and SESSION lookup.
    */
   async resolvePeriod(kind: ReportPeriod, date: string): Promise<DateRange> {
+    try {
+      assertCalendarDate(date);
+    } catch (error) {
+      throw new ValidationFailedException([(error as Error).message]);
+    }
+
     if (isCalendarPeriod(kind)) {
-      try {
-        return calendarRange(kind, date);
-      } catch (error) {
-        throw new ValidationFailedException([(error as Error).message]);
-      }
+      return calendarRange(kind, date);
     }
 
     const table = kind === ReportPeriod.Term ? 'terms' : 'academic_sessions';

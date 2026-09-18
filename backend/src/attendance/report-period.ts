@@ -81,6 +81,21 @@ export function calendarRange(kind: CalendarPeriod, date: string): DateRange {
   }
 }
 
+/**
+ * Refuses a date that has the right shape but is not on the calendar.
+ *
+ * The one check every report period shares, run before a period is resolved at
+ * all. The DTO checks the `YYYY-MM-DD` shape, which 2026-02-30 passes. The
+ * calendar periods would catch it in `calendarRange`, but TERM and SESSION hand
+ * the date to Postgres, which refuses it with an error the API would have
+ * reported as a 500. Checking here, once, gives all five the same 422.
+ *
+ * @throws RangeError naming the date.
+ */
+export function assertCalendarDate(date: string): void {
+  parseDate(date);
+}
+
 function parseDate(date: string): Date {
   const [year, month, day] = date.split('-').map(Number);
   const parsed = new Date(Date.UTC(year, month - 1, day));

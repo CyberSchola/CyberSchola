@@ -1,4 +1,4 @@
-import { calendarRange, isCalendarPeriod, ReportPeriod } from './report-period';
+import { assertCalendarDate, calendarRange, isCalendarPeriod, ReportPeriod } from './report-period';
 
 /**
  * The calendar periods at the dates where period arithmetic goes wrong.
@@ -60,6 +60,19 @@ describe('calendar periods', () => {
       expect(() => calendarRange(ReportPeriod.Monthly, date)).toThrow(/not a real calendar date/);
     },
   );
+
+  describe('assertCalendarDate, the check every period shares', () => {
+    it.each(['2026-02-30', '2027-02-29', '2026-13-01', '2026-00-10', '2026-04-31'])(
+      'refuses %s',
+      (date) => {
+        expect(() => assertCalendarDate(date)).toThrow(`${date} is not a real calendar date.`);
+      },
+    );
+
+    it.each(['2028-02-29', '2026-12-31', '2026-01-01'])('accepts %s', (date) => {
+      expect(() => assertCalendarDate(date)).not.toThrow();
+    });
+  });
 
   it('knows which periods are calendar arithmetic and which the school defines', () => {
     expect(

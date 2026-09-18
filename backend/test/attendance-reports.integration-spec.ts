@@ -275,13 +275,24 @@ describe('attendance reports', () => {
       ]);
     });
 
-    it('refuses a date that is not on the calendar, rather than rolling it over', async () => {
-      await request(e2e.server())
-        .get('/api/v1/attendance/reports')
-        .query({ period: ReportPeriod.Monthly, date: '2026-02-30', groupBy: ReportGrouping.Role })
-        .set(await as(users.adminA))
-        .expect(422);
-    });
+    // Every period, not only the calendar ones. TERM and SESSION are looked up in
+    // Postgres by date, and a date that does not exist must be refused before
+    // that lookup, with the same answer the calendar periods give.
+    it.each(Object.values(ReportPeriod))(
+      'refuses a %s report for a date that is not on the calendar, with the same 422',
+      async (period) => {
+        const response = await request(e2e.server())
+          .get('/api/v1/attendance/reports')
+          .query({ period, date: '2026-02-30', groupBy: ReportGrouping.Role })
+          .set(await as(users.adminA))
+          .expect(422);
+
+        expect(response.body).toMatchObject({
+          code: 'VALIDATION_ERROR',
+          details: ['2026-02-30 is not a real calendar date.'],
+        });
+      },
+    );
   });
 
   // -------------------------------------------------------------------------
