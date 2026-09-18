@@ -122,4 +122,36 @@ describe('combineFragments', () => {
   it('yields FALSE for no fragments', () => {
     expect(combineFragments([])).toEqual({ sql: 'FALSE', params: {} });
   });
+
+  it('refuses the same SQL bound to different values, rather than keeping one of them', () => {
+    // The case review found. Deduplicating on the SQL text alone let the second
+    // fragment replace the first before the parameter check could see the
+    // conflict, so one actor's rule would silently run with the other's value.
+    expect(() =>
+      combineFragments([
+        { sql: 'row.user = :__u', params: { __u: 'first-actor' } },
+        { sql: 'row.user = :__u', params: { __u: 'second-actor' } },
+      ]),
+    ).toThrow(/share their SQL but bind different values/);
+  });
+
+  it('refuses the same SQL when one binds a name the other does not', () => {
+    expect(() =>
+      combineFragments([
+        { sql: 'row.user = :__u', params: { __u: USER } },
+        { sql: 'row.user = :__u', params: { __u: USER, __extra: 1 } },
+      ]),
+    ).toThrow(/share their SQL but bind different values/);
+  });
+
+  it('still folds the same SQL with the same bindings into one, and keeps its value', () => {
+    // Two roles sharing one rule must not be refused: that is the case the
+    // deduplication exists for.
+    const combined = combineFragments([
+      { sql: 'row.user = :__u', params: { __u: USER } },
+      { sql: 'row.user = :__u', params: { __u: USER } },
+    ]);
+
+    expect(combined).toEqual({ sql: '((row.user = :__u))', params: { __u: USER } });
+  });
 });
