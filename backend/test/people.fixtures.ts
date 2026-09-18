@@ -28,17 +28,29 @@ export async function seedMember(
   roles: readonly Role[] = [],
   options: { readonly status?: 'ACTIVE' | 'SUSPENDED'; readonly deleted?: boolean } = {},
 ): Promise<SeededMember> {
+  // Created active and given its roles first, then suspended or removed, which is
+  // the only order the database allows: a role can only be granted to a live,
+  // active membership. It is also the order it happens in a school.
   const [membership] = await owner.query<Array<{ id: string }>>(
-    `INSERT INTO memberships (tenant_id, user_id, status, deleted_at)
-     VALUES ($1, $2, $3, CASE WHEN $4::boolean THEN now() END)
-     RETURNING id`,
-    [tenantId, userId, options.status ?? 'ACTIVE', options.deleted ?? false],
+    `INSERT INTO memberships (tenant_id, user_id, status) VALUES ($1, $2, 'ACTIVE') RETURNING id`,
+    [tenantId, userId],
   );
 
   const roleRows: Partial<Record<Role, string>> = {};
 
   for (const role of roles) {
     roleRows[role] = await seedRoleRow(owner, tenantId, role, membership.id);
+  }
+
+  if (options.status === 'SUSPENDED') {
+    await owner.query(`UPDATE memberships SET status = 'SUSPENDED' WHERE id = $1`, [membership.id]);
+  }
+
+  // Removing ends the roles, per migration 1757700400000: an administrator row is
+  // soft-deleted and a person record is unlinked. The ids above still name the
+  // rows, so a suite can check what became of them.
+  if (options.deleted === true) {
+    await owner.query(`UPDATE memberships SET deleted_at = now() WHERE id = $1`, [membership.id]);
   }
 
   return { membershipId: membership.id, roleRows };
