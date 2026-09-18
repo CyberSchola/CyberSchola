@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 
-import { toRole, type Role } from '../auth/permission.matrix';
+import { toRoles, type Role } from '../auth/permission.matrix';
+import { rolesOfMembership } from './membership-roles';
 import { enterVerifiedJobContext } from './request-context';
 import { TenantTransactionService } from './tenant-transaction.service';
 
@@ -9,7 +10,6 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 interface MembershipRow {
   id: string;
-  role: string;
 }
 
 /**
@@ -17,7 +17,7 @@ interface MembershipRow {
  *
  * This is the job-side equivalent of `MembershipTenantResolver`, and it is
  * deliberately the same shape: the caller names a school and a person, and the
- * **database** decides whether that pairing exists and what role it carries.
+ * **database** decides whether that pairing exists and what roles it carries.
  *
  * ## Why the role is looked up rather than passed in
  *
@@ -82,65 +82,66 @@ export class JobContextService {
 
     // Built field by field from the verified row, never by spreading the job.
     // Spreading would carry through anything else a caller attached, such as a
-    // `role` smuggled in with a cast.
+    // `roles` smuggled in with a cast.
     return enterVerifiedJobContext(
       {
         jobName: job.jobName,
         tenantId: job.tenantId,
         userId: job.userId,
         membershipId: membership.id,
-        role: membership.role,
+        roles: membership.roles,
       },
       () => this.transactions.runInUserAndTenantContext(job.userId, job.tenantId, work),
     );
   }
 
   /**
-   * The actor's live membership of that school, and the role on it, or an error.
+   * The actor's live membership of that school, and the roles it holds, or an error.
    *
-   * Runs in a user context and nothing else, which is the same bootstrap path
-   * the request resolver uses: the membership policy admits a row when
-   * `user_id = current_user_id()`, so this reads the actor's own memberships
-   * and cannot see anyone else's. With no tenant set, the other half of that
-   * policy is false, so naming a school here proves nothing by itself.
+   * Two statements in one transaction. The membership is read in a user context
+   * alone, the same bootstrap path the request resolver uses: the membership
+   * policy admits a row when `user_id = current_user_id()`, so this reads the
+   * actor's own memberships and cannot see anyone else's. Only once that row
+   * proves the actor belongs to the school is the tenant set, and the roles read
+   * under it, because the role tables are tenant-isolated like everything else.
    */
   private async membershipWithin(
     tenantId: string,
     userId: string,
-  ): Promise<{ id: string; role: Role }> {
-    const rows = await this.transactions.runInUserContext(userId, async (manager) =>
-      manager.query<MembershipRow[]>(
-        `SELECT id, role
+  ): Promise<{ id: string; roles: Role[] }> {
+    const { id, raw } = await this.transactions.runInUserContext(userId, async (manager) => {
+      const rows = await manager.query<MembershipRow[]>(
+        `SELECT id
            FROM memberships
           WHERE user_id = $1
             AND tenant_id = $2
             AND status = 'ACTIVE'
             AND deleted_at IS NULL`,
         [userId, tenantId],
-      ),
-    );
+      );
 
-    const found = rows[0];
+      const membership = rows[0];
 
-    if (!found) {
+      if (!membership) {
+        throw new Error(
+          `Refusing to open a job context: the actor holds no live membership of school ` +
+            `${tenantId}. A job acts as somebody, and that somebody has to belong where the job ` +
+            'points. Naming a school is not the same as being in it.',
+        );
+      }
+
+      return { id: membership.id, raw: await rolesOfMembership(manager, tenantId, membership.id) };
+    });
+
+    const roles = [...toRoles(raw)];
+
+    if (roles.length === 0) {
       throw new Error(
-        `Refusing to open a job context: the actor holds no live membership of school ` +
-          `${tenantId}. A job acts as somebody, and that somebody has to belong where the job ` +
-          'points. Naming a school is not the same as being in it.',
+        `Refusing to open a job context: the actor belongs to school ${tenantId} but holds no ` +
+          'role there, so there is nothing it may see.',
       );
     }
 
-    const role = toRole(found.role);
-
-    if (role === undefined) {
-      // Fails closed on a role the matrix does not know, exactly as the request
-      // path does. A job must not be how an unrecognised role gets in.
-      throw new Error(
-        `The membership carries the role "${found.role}", which is not in the Role enum. ` +
-          'A migration added a database enum value without updating the application.',
-      );
-    }
-
-    return { id: found.id, role };
+    return { id, roles };
   }
 }

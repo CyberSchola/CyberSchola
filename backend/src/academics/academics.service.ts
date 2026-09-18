@@ -1,14 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import type { DeepPartial, EntityManager } from 'typeorm';
 
-import { Role } from '../auth/permission.matrix';
 import {
   ResourceNotFoundException,
   ValidationFailedException,
 } from '../common/exceptions/app.exception';
 import type { TenantOwnedEntity } from '../common/entities/tenant-owned.entity';
 import type { Page, PageRequest } from '../common/pagination/pagination';
-import { Membership, MembershipStatus } from '../identity/membership.entity';
 import { requireTenantId, requireUserId } from '../tenancy/request-context';
 import { TenantTransactionService } from '../tenancy/tenant-transaction.service';
 import type {
@@ -28,7 +26,6 @@ import type {
   CreateTermDto,
   ElectiveRegistrationDto,
   GradeLevelDto,
-  PersonAnchorDto,
   SubjectDto,
   TermDto,
 } from './academics.dto';
@@ -39,19 +36,12 @@ import { ClassSupervisor } from './entities/class-supervisor.entity';
 import { ElectiveRegistration } from './entities/elective-registration.entity';
 import { GradeLevel } from './entities/grade-level.entity';
 import { SchoolClass } from './entities/school-class.entity';
-import { Student } from './entities/student.entity';
 import { Subject } from './entities/subject.entity';
-import { Teacher } from './entities/teacher.entity';
 import { Term } from './entities/term.entity';
-import { ListStudentsAction } from './list-students.action';
-import { RecordAction } from './record.action';
-
-/** Why a suspended membership cannot be anchored. Shared with the route's documentation. */
-export const ANCHOR_REQUIRES_ACTIVE_MEMBERSHIP =
-  'That membership is suspended. Reactivate it before making it a student or a teacher.';
+import { RecordAction } from '../common/actions/record.action';
 
 /**
- * The academic spine: structure, assignments, and the students a caller may see.
+ * The academic spine: structure and assignments.
  *
  * Every operation runs with both the user and the school in session, so
  * row-level security confines it to one school and the access scopes narrow
@@ -131,18 +121,6 @@ export class AcademicsService {
 
   createSubject(input: CreateSubjectDto): Promise<SubjectDto> {
     return this.createOf(Subject, 'subject', { ...input, code: input.code ?? null }, toSubjectDto);
-  }
-
-  // -------------------------------------------------------------------------
-  // People anchors
-  // -------------------------------------------------------------------------
-
-  createStudent(membershipId: string): Promise<PersonAnchorDto> {
-    return this.createAnchor(Student, 'student', membershipId, Role.Student);
-  }
-
-  createTeacher(membershipId: string): Promise<PersonAnchorDto> {
-    return this.createAnchor(Teacher, 'teacher', membershipId, Role.Teacher);
   }
 
   // -------------------------------------------------------------------------
@@ -237,19 +215,6 @@ export class AcademicsService {
   }
 
   // -------------------------------------------------------------------------
-  // Students, scoped
-  // -------------------------------------------------------------------------
-
-  /** The students this caller may see: all for an administrator, a teacher's own otherwise. */
-  listStudents(page: PageRequest): Promise<Page<PersonAnchorDto>> {
-    return this.inSchool(async (manager) => {
-      const result = await new ListStudentsAction(manager).execute(page);
-
-      return { ...result, items: result.items.map(toAnchorDto) };
-    });
-  }
-
-  // -------------------------------------------------------------------------
   // Plumbing
   // -------------------------------------------------------------------------
 
@@ -280,54 +245,6 @@ export class AcademicsService {
       const created = await new RecordAction(manager, entity, alias).create(input);
 
       return toDto(created);
-    });
-  }
-
-  /**
-   * Anchors a membership as a student or a teacher, after checking it is live,
-   * active and holds the matching role, in that order.
-   *
-   * Active because membership status is authoritative. A suspended membership
-   * cannot resolve into the school, so anchoring one grants nothing today, but it
-   * would leave an academic participant that looks current attached to a person
-   * the school has switched off, and every later check would have to compensate.
-   * The anchor is not a second source of truth about whether someone is active.
-   * A removed membership never gets this far: the entity's delete column hides it
-   * from the lookup, so it is a 404 like an id that was never issued.
-   *
-   * The role is checked here rather than by a foreign key on purpose. BE-A01
-   * allows one role per membership, so a teacher who is also a parent cannot be
-   * both, and that is scheduled to change in the people phase. A role-locked key
-   * would bake the single-role model into the schema; this check does not.
-   */
-  private createAnchor<TEntity extends Student | Teacher>(
-    entity: new () => TEntity,
-    alias: string,
-    membershipId: string,
-    expected: Role,
-  ): Promise<PersonAnchorDto> {
-    return this.inSchool(async (manager) => {
-      const membership = await manager.findOne(Membership, { where: { id: membershipId } });
-
-      if (!membership) {
-        throw new ResourceNotFoundException();
-      }
-
-      if (membership.status !== MembershipStatus.Active) {
-        throw new ValidationFailedException([ANCHOR_REQUIRES_ACTIVE_MEMBERSHIP]);
-      }
-
-      if (membership.role !== expected) {
-        throw new ValidationFailedException([
-          `That membership holds the ${membership.role} role, not ${expected}.`,
-        ]);
-      }
-
-      const created = await new RecordAction(manager, entity, alias).create({
-        membershipId,
-      } as DeepPartial<TEntity>);
-
-      return toAnchorDto(created);
     });
   }
 }
@@ -369,11 +286,6 @@ const toSubjectDto = (row: Subject): SubjectDto => ({
   id: row.id,
   name: row.name,
   code: row.code,
-});
-
-const toAnchorDto = (row: Student | Teacher): PersonAnchorDto => ({
-  id: row.id,
-  membershipId: row.membershipId,
 });
 
 const toSupervisorDto = (row: ClassSupervisor): ClassSupervisorDto => ({

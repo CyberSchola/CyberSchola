@@ -1,6 +1,8 @@
 import { DataSource } from 'typeorm';
 
+import { Role } from '../src/auth/permission.matrix';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
+import { seedMember } from './people.fixtures';
 
 /**
  * The membership policy, verified as the role that actually serves traffic.
@@ -76,13 +78,9 @@ describe('membership isolation', () => {
 
     // Alice teaches at school A and parents at school B: the multi-school case.
     // Bob is only at school B, and exists so "another user's rows" is real.
-    await owner.query(
-      `INSERT INTO memberships (tenant_id, user_id, role) VALUES
-         ($1, $3, 'TEACHER'),
-         ($2, $3, 'PARENT'),
-         ($2, $4, 'SCHOOL_ADMIN')`,
-      [schoolA, schoolB, alice, bob],
-    );
+    await seedMember(owner, schoolA, alice, [Role.Teacher]);
+    await seedMember(owner, schoolB, alice, [Role.Parent]);
+    await seedMember(owner, schoolB, bob, [Role.SchoolAdmin]);
   }, 120_000);
 
   afterAll(async () => {
@@ -123,9 +121,9 @@ describe('membership isolation', () => {
     it('returns nothing belonging to another user', async () => {
       // Bob's SCHOOL_ADMIN row at school B must not appear for Alice, even
       // though Alice is also a member of school B.
-      const rows = await asSession<Array<{ role: string }>>(
+      const rows = await asSession<Array<{ id: string }>>(
         { userId: alice },
-        `SELECT role FROM memberships WHERE user_id = $1`,
+        `SELECT id FROM memberships WHERE user_id = $1`,
         [bob],
       );
 
@@ -202,7 +200,7 @@ describe('membership isolation', () => {
       await expect(
         asSession(
           { userId: outsider },
-          `INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, 'SCHOOL_ADMIN')`,
+          `INSERT INTO memberships (tenant_id, user_id) VALUES ($1, $2)`,
           [schoolA, outsider],
         ),
       ).rejects.toThrow(/row-level security/i);
@@ -214,7 +212,7 @@ describe('membership isolation', () => {
       await expect(
         asSession(
           { userId: alice, tenantId: schoolA },
-          `INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, 'SCHOOL_ADMIN')`,
+          `INSERT INTO memberships (tenant_id, user_id) VALUES ($1, $2)`,
           [schoolB, alice],
         ),
       ).rejects.toThrow(/row-level security/i);
@@ -225,7 +223,7 @@ describe('membership isolation', () => {
 
       await asSession(
         { userId: bob, tenantId: schoolB },
-        `INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, 'STUDENT')`,
+        `INSERT INTO memberships (tenant_id, user_id) VALUES ($1, $2)`,
         [schoolB, newcomer],
       );
 
@@ -246,6 +244,40 @@ describe('membership isolation', () => {
           [schoolA, bob],
         ),
       ).rejects.toThrow(/row-level security/i);
+    });
+  });
+
+  describe('the membership_roles view', () => {
+    // The view unions the five role tables. Views run as their owner by default,
+    // and the owner here bypasses row-level security, so without
+    // security_invoker this view would hand every school's roles to anyone.
+    it('returns nothing with a user and no school, because the role tables are tenant-isolated', async () => {
+      const rows = await asSession<unknown[]>({ userId: alice }, `SELECT * FROM membership_roles`);
+
+      expect(rows).toEqual([]);
+    });
+
+    it("returns only the chosen school's roles once a school is set", async () => {
+      const rows = await asSession<Array<{ tenant_id: string; role: string }>>(
+        { userId: alice, tenantId: schoolB },
+        `SELECT tenant_id, role::text AS role FROM membership_roles ORDER BY role`,
+      );
+
+      // School B holds Alice as PARENT and Bob as SCHOOL_ADMIN; school A's
+      // TEACHER row for Alice must not appear.
+      expect(rows.map((row) => row.tenant_id)).toEqual([schoolB, schoolB]);
+      expect(rows.map((row) => row.role)).toEqual(['PARENT', 'SCHOOL_ADMIN']);
+    });
+
+    it('cannot be written through', async () => {
+      await expect(
+        asSession(
+          { userId: bob, tenantId: schoolB },
+          `INSERT INTO membership_roles (tenant_id, membership_id, role)
+           SELECT tenant_id, id, 'SCHOOL_ADMIN' FROM memberships WHERE user_id = $1`,
+          [alice],
+        ),
+      ).rejects.toThrow(/permission denied|cannot insert/i);
     });
   });
 

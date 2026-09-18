@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AcademicStructureController } from './academic-structure.controller';
+import { AssignmentsController } from './assignments.controller';
 import { AcademicsService } from './academics.service';
 import { AcademicSession } from './entities/academic-session.entity';
 import { ClassEnrolment } from './entities/class-enrolment.entity';
@@ -10,11 +11,8 @@ import { ClassSupervisor } from './entities/class-supervisor.entity';
 import { ElectiveRegistration } from './entities/elective-registration.entity';
 import { GradeLevel } from './entities/grade-level.entity';
 import { SchoolClass } from './entities/school-class.entity';
-import { Student } from './entities/student.entity';
 import { Subject } from './entities/subject.entity';
-import { Teacher } from './entities/teacher.entity';
 import { Term } from './entities/term.entity';
-import { PeopleAssignmentsController } from './people-assignments.controller';
 
 /**
  * The academic spine, blueprint section 22 steps three to nine.
@@ -32,15 +30,13 @@ import { PeopleAssignmentsController } from './people-assignments.controller';
       GradeLevel,
       SchoolClass,
       Subject,
-      Student,
-      Teacher,
       ClassSupervisor,
       ClassSubject,
       ClassEnrolment,
       ElectiveRegistration,
     ]),
   ],
-  controllers: [AcademicStructureController, PeopleAssignmentsController],
+  controllers: [AcademicStructureController, AssignmentsController],
   providers: [AcademicsService],
 })
 export class AcademicsModule {}

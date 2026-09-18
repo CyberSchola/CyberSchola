@@ -75,6 +75,22 @@ export function ApiItemResponse(
   );
 }
 
+/**
+ * Documents a success that returns no record, such as a removal, and sets its
+ * message. The envelope still arrives, with `data: null`, so every client parses
+ * every response the same way.
+ */
+export function ApiEmptyResponse(message: string) {
+  return applyDecorators(
+    ResponseMessage(message),
+    ApiResponse({
+      status: HttpStatus.OK,
+      description: message,
+      schema: envelope({ type: 'object', nullable: true, example: null }, HttpStatus.OK, message),
+    }),
+  );
+}
+
 type DocumentedFailure =
   | HttpStatus.BAD_REQUEST
   | HttpStatus.UNAUTHORIZED
@@ -113,8 +129,14 @@ const FAILURE_EXAMPLES: Record<DocumentedFailure, { code: ErrorCode; message: st
  * produce. The description says when it happens; the example is the body the
  * filter really sends.
  */
-export function ApiErrorResponse(status: DocumentedFailure, description: string) {
-  const { code, message } = FAILURE_EXAMPLES[status];
+export function ApiErrorResponse(
+  status: DocumentedFailure,
+  description: string,
+  /** The message the route really sends, when it is more specific than the default. */
+  specificMessage?: string,
+) {
+  const { code, message: defaultMessage } = FAILURE_EXAMPLES[status];
+  const message = specificMessage ?? defaultMessage;
   return ApiResponse({
     status,
     description,

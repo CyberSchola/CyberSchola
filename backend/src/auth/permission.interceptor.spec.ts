@@ -47,9 +47,14 @@ describe('PermissionInterceptor', () => {
 
   const next: CallHandler = { handle: () => of('handled') };
 
-  /** Runs the interceptor with a role in the request context. */
+  /**
+   * Runs the interceptor with roles in the request context.
+   *
+   * A single role, a list of them, or `undefined` for a context with no roles
+   * resolved at all.
+   */
   async function runAs(
-    role: string | undefined,
+    role: string | readonly string[] | undefined,
     metadata: RouteMetadata,
     handler: CallHandler = next,
   ): Promise<unknown> {
@@ -60,7 +65,7 @@ describe('PermissionInterceptor', () => {
         origin: 'http',
         tenantId: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
         userId: 'u',
-        role,
+        roles: role === undefined ? undefined : typeof role === 'string' ? [role] : role,
         requestId: 'r',
       },
       () => firstValueFrom(interceptor.intercept(makeContext(), handler)),
@@ -123,8 +128,31 @@ describe('PermissionInterceptor', () => {
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
+    it('admits a person when any one of their roles holds it', async () => {
+      // A teacher who is also a parent may use what either role may use. Which
+      // rows they then see is the access scope's union, not this check's.
+      await expect(
+        runAs([Role.Parent, Role.SchoolAdmin], { permission: Permission.PeopleManage }),
+      ).resolves.toBe('handled');
+    });
+
+    it('refuses a person when none of their roles holds it', async () => {
+      await expect(
+        runAs([Role.Parent, Role.Teacher], { permission: Permission.PeopleManage }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('refuses a member who holds no role yet with 403, not 401', async () => {
+      // They belong to the school, so this is a refusal of a known caller.
+      const error = await runAs([], { permission: Permission.MembershipRead }).catch(
+        (thrown: unknown) => thrown,
+      );
+
+      expect(error).toBeInstanceOf(ForbiddenException);
+    });
+
     it('reports 401 rather than 403 when there is no role at all', async () => {
-      // No role in context means no tenant was resolved, which is an
+      // No roles in context means no tenant was resolved, which is an
       // authentication problem. A 403 would claim we know who they are and are
       // refusing them, which is a stronger statement than we can support.
       const error = await runAs(undefined, { permission: Permission.MembershipRead }).catch(

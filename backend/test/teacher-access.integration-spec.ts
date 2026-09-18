@@ -1,9 +1,10 @@
 import { DataSource } from 'typeorm';
 
-import { ListStudentsAction } from '../src/academics/list-students.action';
+import { ListStudentsAction } from '../src/people/list-students.action';
 import { Role } from '../src/auth/permission.matrix';
 import { runWithRequestContext } from '../src/tenancy/request-context';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
+import { seedMember } from './people.fixtures';
 
 /**
  * The teacher access rule, proven by what each teacher actually gets back.
@@ -109,31 +110,29 @@ describe('teacher access to students', () => {
 
     const inSchool = (person: Person) => (person.startsWith('otherSchool') ? OTHER_SCHOOL : SCHOOL);
 
-    const role = (person: Person): string => {
-      if (person === 'admin') return 'SCHOOL_ADMIN';
-      return person.toLowerCase().includes('student') ? 'STUDENT' : 'TEACHER';
+    const role = (person: Person): Role => {
+      if (person === 'admin') return Role.SchoolAdmin;
+      return person.toLowerCase().includes('student') ? Role.Student : Role.Teacher;
     };
 
     const teacherRow = new Map<Person, string>();
 
     for (const person of people) {
-      const membership = await insert('memberships', {
-        tenant_id: inSchool(person),
-        user_id: userId(person),
-        role: role(person),
-        status: person === 'suspendedTeacher' ? 'SUSPENDED' : 'ACTIVE',
-      });
+      // The role is the role row, not a column on the membership.
+      const { roleRows } = await seedMember(
+        owner,
+        inSchool(person),
+        userId(person),
+        [role(person)],
+        {
+          status: person === 'suspendedTeacher' ? 'SUSPENDED' : 'ACTIVE',
+        },
+      );
 
-      if (role(person) === 'TEACHER') {
-        teacherRow.set(
-          person,
-          await insert('teachers', { tenant_id: inSchool(person), membership_id: membership }),
-        );
-      } else if (role(person) === 'STUDENT') {
-        studentRow.set(
-          person,
-          await insert('students', { tenant_id: inSchool(person), membership_id: membership }),
-        );
+      if (role(person) === Role.Teacher) {
+        teacherRow.set(person, roleRows[Role.Teacher]!);
+      } else if (role(person) === Role.Student) {
+        studentRow.set(person, roleRows[Role.Student]!);
       }
     }
 
@@ -252,7 +251,7 @@ describe('teacher access to students', () => {
   /** Who a person can see, as names, sorted for a stable comparison. */
   async function visibleTo(person: Person, role: Role, tenantId = SCHOOL): Promise<Person[]> {
     const page = await runWithRequestContext(
-      { origin: 'http', tenantId, userId: userId(person), role, requestId: 'test' },
+      { origin: 'http', tenantId, userId: userId(person), roles: [role], requestId: 'test' },
       () =>
         app.transaction(async (manager) => {
           await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId(person)]);
@@ -264,7 +263,7 @@ describe('teacher access to students', () => {
 
     const byRow = new Map([...studentRow].map(([name, id]) => [id, name]));
 
-    return page.items.map((student) => byRow.get(student.id)!).sort();
+    return page.items.map(({ student }) => byRow.get(student.id)!).sort();
   }
 
   describe('each way a teacher reaches a student', () => {
@@ -386,11 +385,17 @@ describe('teacher access to students', () => {
       );
     });
 
-    it('fails closed for a non-teacher role that somehow reaches the list', async () => {
-      // A student holds no supervision or subject assignment, so no branch can
-      // match. The permission matrix already keeps students off this endpoint;
-      // this is what happens if that ever changes.
-      expect(await visibleTo('studentA', Role.Student)).toEqual([]);
+    it('lets a student see themselves and nobody else', async () => {
+      // Blueprint section 16. A student holds no supervision or subject
+      // assignment, so the teacher branch cannot match; the self branch can,
+      // and only for their own record.
+      expect(await visibleTo('studentA', Role.Student)).toEqual(['studentA']);
+    });
+
+    it('fails closed for staff, whose role declares no branch', async () => {
+      // The permission matrix keeps staff off the student routes. This is what
+      // happens if that ever changes: FALSE, not the whole school.
+      expect(await visibleTo('supervisor', Role.Staff)).toEqual([]);
     });
   });
 
@@ -401,7 +406,7 @@ describe('teacher access to students', () => {
           origin: 'http',
           tenantId: SCHOOL,
           userId: userId('supervisor'),
-          role: Role.Teacher,
+          roles: [Role.Teacher],
           requestId: 'test',
         },
         () =>

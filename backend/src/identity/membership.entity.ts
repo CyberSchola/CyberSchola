@@ -1,6 +1,5 @@
 import { Column, Entity, Index } from 'typeorm';
 
-import { Role } from '../auth/permission.matrix';
 import { TenantOwnedEntity } from '../common/entities/tenant-owned.entity';
 
 /** Whether a membership is currently usable. */
@@ -10,7 +9,12 @@ export enum MembershipStatus {
 }
 
 /**
- * Who belongs to a school, and as what.
+ * Who belongs to a school.
+ *
+ * What they are there is not on this row. Since BE-P01 a person's roles are the
+ * role rows that point at their membership (a teacher row, a parent row, and so
+ * on), read back through the `membership_roles` view, so one membership can hold
+ * several.
  *
  * Maps the table created in migration 1757500000000. The migration remains the
  * source of truth for the schema, including the two partial indexes and the
@@ -25,9 +29,6 @@ export class Membership extends TenantOwnedEntity {
   @Index()
   @Column({ type: 'uuid', name: 'user_id' })
   userId!: string;
-
-  @Column({ type: 'enum', enum: Role, enumName: 'memberships_role_enum' })
-  role!: Role;
 
   @Column({
     type: 'enum',
