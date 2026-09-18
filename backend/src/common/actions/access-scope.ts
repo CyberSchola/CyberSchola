@@ -139,11 +139,30 @@ export function scopeFor<TEntity extends ObjectLiteral>(options: {
  * non-administrator sees their own membership, say) do not repeat it. Exported
  * for the unit tests and for callers that need the same predicate as a selected
  * flag rather than a filter.
+ *
+ * ## Identical means the SQL and the bindings
+ *
+ * Two fragments with the same SQL text are only the same rule if they bind the
+ * same values. The same text bound to a different user id is a different rule,
+ * and keeping one of them would silently drop the other's rows or, worse, keep
+ * the wrong actor's. So a repeat is folded only when its bindings match exactly,
+ * and refused otherwise. An earlier version keyed on the SQL alone and let the
+ * second fragment replace the first before the parameter check below could see
+ * the conflict, which contradicted the contract stated on `ScopeFragment`.
  */
 export function combineFragments(fragments: readonly ScopeFragment[]): ScopeFragment {
   const unique = new Map<string, ScopeFragment>();
 
   for (const fragment of fragments) {
+    const seen = unique.get(fragment.sql);
+
+    if (seen !== undefined && !sameBindings(seen.params, fragment.params)) {
+      throw new Error(
+        'Two access-scope fragments share their SQL but bind different values. They are two ' +
+          'different rules, and folding them into one would silently drop one of them.',
+      );
+    }
+
     unique.set(fragment.sql, fragment);
   }
 
@@ -170,4 +189,17 @@ export function combineFragments(fragments: readonly ScopeFragment[]): ScopeFrag
     sql: `(${[...unique.keys()].map((sql) => `(${sql})`).join(' OR ')})`,
     params,
   };
+}
+
+/** Whether two fragments bind exactly the same names to exactly the same values. */
+function sameBindings(
+  left: Readonly<Record<string, unknown>>,
+  right: Readonly<Record<string, unknown>>,
+): boolean {
+  const names = Object.keys(left);
+
+  return (
+    names.length === Object.keys(right).length &&
+    names.every((name) => name in right && Object.is(left[name], right[name]))
+  );
 }

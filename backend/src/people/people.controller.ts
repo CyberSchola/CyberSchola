@@ -42,9 +42,16 @@ import {
   UpdateStudentDto,
   UpdateTeacherDto,
 } from './people.dto';
-import { LAST_ADMINISTRATOR_MESSAGE, PERSON_KINDS, PeopleService } from './people.service';
+import {
+  LAST_ADMINISTRATOR_MESSAGE,
+  PERSON_KINDS,
+  PeopleService,
+  ROLE_REQUIRES_ACTIVE_MEMBERSHIP,
+} from './people.service';
 
 const BODY_INVALID = 'The body failed validation.';
+const SUSPENDED_MEMBERSHIP =
+  'The membership is suspended. A role is only given to an active member; reactivate it first.';
 const NOT_IN_SCHOOL = (what: string) => `No ${what} with this id in this school.`;
 const LINK_NOT_FOUND = (what: string) =>
   `No ${what}, or no membership, with that id in this school.`;
@@ -147,6 +154,11 @@ export class StudentsController {
   @ApiErrorResponse(HttpStatus.BAD_REQUEST, BODY_INVALID)
   @ApiErrorResponse(HttpStatus.NOT_FOUND, LINK_NOT_FOUND('student'))
   @ApiErrorResponse(HttpStatus.CONFLICT, ALREADY_LINKED('student'))
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    SUSPENDED_MEMBERSHIP,
+    ROLE_REQUIRES_ACTIVE_MEMBERSHIP,
+  )
   @ApiItemResponse(StudentDto, 'Account linked.')
   link(@Param('id', ParseUUIDPipe) id: string, @Body() input: LinkAccountDto): Promise<StudentDto> {
     return this.people.linkAccount(PERSON_KINDS.student, id, input.membershipId);
@@ -224,6 +236,11 @@ export class TeachersController {
   @ApiErrorResponse(HttpStatus.BAD_REQUEST, BODY_INVALID)
   @ApiErrorResponse(HttpStatus.NOT_FOUND, LINK_NOT_FOUND('teacher'))
   @ApiErrorResponse(HttpStatus.CONFLICT, ALREADY_LINKED('teacher'))
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    SUSPENDED_MEMBERSHIP,
+    ROLE_REQUIRES_ACTIVE_MEMBERSHIP,
+  )
   @ApiItemResponse(TeacherDto, 'Account linked.')
   link(@Param('id', ParseUUIDPipe) id: string, @Body() input: LinkAccountDto): Promise<TeacherDto> {
     return this.people.linkAccount(PERSON_KINDS.teacher, id, input.membershipId);
@@ -303,6 +320,11 @@ export class ParentsController {
   @ApiErrorResponse(HttpStatus.BAD_REQUEST, BODY_INVALID)
   @ApiErrorResponse(HttpStatus.NOT_FOUND, LINK_NOT_FOUND('parent'))
   @ApiErrorResponse(HttpStatus.CONFLICT, ALREADY_LINKED('parent'))
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    SUSPENDED_MEMBERSHIP,
+    ROLE_REQUIRES_ACTIVE_MEMBERSHIP,
+  )
   @ApiItemResponse(ParentDto, 'Account linked.')
   link(@Param('id', ParseUUIDPipe) id: string, @Body() input: LinkAccountDto): Promise<ParentDto> {
     return this.people.linkAccount(PERSON_KINDS.parent, id, input.membershipId);
@@ -374,6 +396,11 @@ export class StaffController {
   @ApiErrorResponse(HttpStatus.BAD_REQUEST, BODY_INVALID)
   @ApiErrorResponse(HttpStatus.NOT_FOUND, LINK_NOT_FOUND('staff member'))
   @ApiErrorResponse(HttpStatus.CONFLICT, ALREADY_LINKED('staff member'))
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    SUSPENDED_MEMBERSHIP,
+    ROLE_REQUIRES_ACTIVE_MEMBERSHIP,
+  )
   @ApiItemResponse(StaffDto, 'Account linked.')
   link(@Param('id', ParseUUIDPipe) id: string, @Body() input: LinkAccountDto): Promise<StaffDto> {
     return this.people.linkAccount(PERSON_KINDS.staff, id, input.membershipId);
@@ -414,6 +441,11 @@ export class SchoolAdminsController {
   @ApiErrorResponse(HttpStatus.BAD_REQUEST, BODY_INVALID)
   @ApiErrorResponse(HttpStatus.NOT_FOUND, NOT_IN_SCHOOL('membership'))
   @ApiErrorResponse(HttpStatus.CONFLICT, 'That membership is already an administrator.')
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    SUSPENDED_MEMBERSHIP,
+    ROLE_REQUIRES_ACTIVE_MEMBERSHIP,
+  )
   @ApiItemResponse(SchoolAdminDto, 'Administrator added.', HttpStatus.CREATED)
   create(@Body() input: CreateSchoolAdminDto): Promise<SchoolAdminDto> {
     return this.people.addAdmin(input.membershipId);

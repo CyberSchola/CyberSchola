@@ -413,7 +413,15 @@ describe('schema conformance', () => {
            AND d.refclassid = 'pg_class'::regclass
       `);
 
-      expect(rows.map((row) => row.table_name).sort()).toEqual(Object.values(ROLE_TABLES).sort());
+      // Every role table, plus memberships: since migration 1757700400000 each branch
+      // reads through the membership and requires it to be live, so a removed
+      // membership holds no effective role even if a role row survived it.
+      const read = rows.map((row) => row.table_name);
+
+      expect(read.filter((table) => table !== 'memberships').sort()).toEqual(
+        Object.values(ROLE_TABLES).sort(),
+      );
+      expect(read).toContain('memberships');
 
       // And each branch's literal matches its table. Probing each table with a
       // row proves the pairing without parsing SQL: insert into one table, read
@@ -458,6 +466,29 @@ describe('schema conformance', () => {
       `);
 
       expect(rows.map((row) => row.value).sort()).toEqual([...ROLES].sort());
+    });
+
+    it('refuses to grant a role to a membership that is not live and active, on every role table', async () => {
+      // The trigger is the database half of the membership lifecycle. A role table
+      // added later without it could hand a role to a suspended or removed member.
+      const rows = await owner.query<Array<{ table_name: string }>>(`
+        SELECT c.relname AS table_name
+          FROM pg_trigger t
+          JOIN pg_class c ON c.oid = t.tgrelid
+          JOIN pg_proc p ON p.oid = t.tgfoid
+         WHERE p.proname = 'role_requires_active_membership' AND NOT t.tgisinternal
+      `);
+
+      expect(rows.map((row) => row.table_name).sort()).toEqual(Object.values(ROLE_TABLES).sort());
+    });
+
+    it("ends a membership's roles when the membership is removed", async () => {
+      const rows = await owner.query<Array<{ tgname: string }>>(`
+        SELECT tgname FROM pg_trigger
+         WHERE tgrelid = 'memberships'::regclass AND NOT tgisinternal
+      `);
+
+      expect(rows.map((row) => row.tgname)).toContain('memberships_end_roles_on_removal');
     });
 
     it('gives every role table the tenant isolation every tenant-owned table has', () => {

@@ -6,6 +6,7 @@ import type { DataSource } from 'typeorm';
 
 import { Role } from '../src/auth/permission.matrix';
 import { collectRoutes } from '../src/common/testing/route-inventory';
+import { ROLE_REQUIRES_ACTIVE_MEMBERSHIP } from '../src/people/people.service';
 import { seedMember, seedRoleRow } from './people.fixtures';
 
 /**
@@ -47,6 +48,7 @@ describe('people end to end', () => {
     | 'tpPupil'
     | 'unrelated'
     | 'newcomerMembership'
+    | 'suspendedMembership'
     | 'teacherRecord'
     | 'parentRecord'
     | 'staffRecord',
@@ -86,6 +88,13 @@ describe('people end to end', () => {
         ]);
         const staff = await seedMember(owner, A, users.staffA, [Role.Staff]);
         a.newcomerMembership = (await seedMember(owner, A, users.newcomerA, [])).membershipId;
+        // A member of school A whose membership is suspended and who holds no role
+        // yet: granting one must be refused, per migration 1757700400000.
+        a.suspendedMembership = (
+          await seedMember(owner, A, '20000000-0000-4000-8000-000000000008', [], {
+            status: 'SUSPENDED',
+          })
+        ).membershipId;
 
         a.teacherRecord = teacher.roleRows[Role.Teacher]!;
         a.parentRecord = parent.roleRows[Role.Parent]!;
@@ -472,5 +481,47 @@ describe('people end to end', () => {
         .set(await as(users.adminB))
         .expect(409);
     });
+  });
+  describe('a role is only granted to an active membership', () => {
+    /** Live rows of a role table pointing at a membership, read as the owner. */
+    async function grantsTo(table: string, membershipId: string): Promise<number> {
+      const rows = await e2e.owner.query<unknown[]>(
+        `SELECT 1 FROM ${table} WHERE membership_id = $1 AND deleted_at IS NULL`,
+        [membershipId],
+      );
+
+      return rows.length;
+    }
+
+    it('refuses to make a suspended member an administrator, and writes nothing', async () => {
+      const response = await request(e2e.server())
+        .post('/api/v1/school-admins')
+        .set(await as(users.adminA))
+        .send({ membershipId: a.suspendedMembership })
+        .expect(422);
+
+      expect((response.body as { details: string[] }).details).toEqual([
+        ROLE_REQUIRES_ACTIVE_MEMBERSHIP,
+      ]);
+      expect(await grantsTo('school_admins', a.suspendedMembership)).toBe(0);
+    });
+
+    it.each([
+      ['/students', 'students', () => a.unrelated],
+      ['/teachers', 'teachers', () => a.teacherRecord],
+      ['/parents', 'parents', () => a.parentRecord],
+      ['/staff', 'staff', () => a.staffRecord],
+    ])(
+      'refuses to link a suspended member to a record at %s, and writes nothing',
+      async (path, table, record) => {
+        await request(e2e.server())
+          .put(`/api/v1${path}/${record()}/account`)
+          .set(await as(users.adminA))
+          .send({ membershipId: a.suspendedMembership })
+          .expect(422);
+
+        expect(await grantsTo(table, a.suspendedMembership)).toBe(0);
+      },
+    );
   });
 });
