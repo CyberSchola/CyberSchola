@@ -63,9 +63,12 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * Section 91 gives teachers and staff `LEAVE` and does not give it to students,
  * and asks the backend to validate that. It is a check constraint rather than
  * only a DTO rule, so a job, a migration or a hand-written statement cannot
- * store a status the domain does not have. `attendance-status.integration-spec`
- * compares the database enum against the TypeScript one, the same way the role
- * enum is kept in step, so a value added on one side alone fails the build.
+ * store a status the domain does not have. The constraint lists what each kind
+ * of person may hold, cell by cell, and the schema conformance suite tries every
+ * one of the eighteen type and status combinations against the database and
+ * compares the answer with `STATUSES_BY_TYPE`, so the two cannot drift apart in
+ * either direction. It also compares the database enum with the TypeScript one,
+ * the same way the role enum is kept in step.
  */
 export class CreateAttendance1757800000000 implements MigrationInterface {
   name = 'CreateAttendance1757800000000';
@@ -151,10 +154,19 @@ export class CreateAttendance1757800000000 implements MigrationInterface {
           END
         ),
 
-        -- Section 91. LEAVE is a teacher and staff status; a student is EXCUSED
-        -- or SICK instead.
+        -- Section 91, the whole matrix, written as what each kind may hold rather
+        -- than what one kind may not. LEAVE is a teacher and staff status; a
+        -- student is EXCUSED or SICK instead. An allow-list rather than an
+        -- exclusion so that a status added to the enum later is refused for every
+        -- kind of person until someone decides who may hold it: an exclusion
+        -- would have quietly allowed it for all three. The CASE yields NULL for an
+        -- unknown kind, and a NULL check does not pass.
         CONSTRAINT attendance_status_allowed_for_type CHECK (
-          attendance_type <> 'STUDENT' OR status <> 'LEAVE'
+          CASE attendance_type
+            WHEN 'STUDENT' THEN status IN ('PRESENT', 'ABSENT', 'LATE', 'EXCUSED', 'SICK')
+            WHEN 'TEACHER' THEN status IN ('PRESENT', 'ABSENT', 'LATE', 'EXCUSED', 'SICK', 'LEAVE')
+            WHEN 'STAFF'   THEN status IN ('PRESENT', 'ABSENT', 'LATE', 'EXCUSED', 'SICK', 'LEAVE')
+          END
         ),
 
         -- Section 92's academic context belongs to a student record and to no
