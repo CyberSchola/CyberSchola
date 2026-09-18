@@ -105,4 +105,40 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Only one reader of the attendance correction trail.
+    //
+    // The trail records what a status used to be, what it became, who changed it
+    // and why, and who may read it is exactly who may read the record it
+    // corrects. ReadAttendanceCorrectionsAction applies that rule as its access
+    // scope. A value import of the entity anywhere else is a way to query the
+    // trail without it, which review of BE-AT01 asked to make hard rather than
+    // merely documented. Type-only imports stay allowed: a type cannot query.
+    // attendance-correction-boundary.spec.ts checks the same thing, plus raw SQL
+    // naming the table, independently of this configuration.
+    files: ['src/**/*.ts'],
+    ignores: [
+      'src/**/*.spec.ts',
+      'src/attendance/entities/attendance-correction.entity.ts',
+      'src/attendance/attendance.module.ts',
+      'src/attendance/read-attendance-corrections.action.ts',
+    ],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/attendance-correction.entity', '**/attendance-correction.entity.ts'],
+              importNames: ['AttendanceCorrection'],
+              allowTypeImports: true,
+              message:
+                'Read correction history through ReadAttendanceCorrectionsAction, which only ' +
+                'returns corrections to records the caller may see.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

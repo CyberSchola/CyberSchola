@@ -93,6 +93,40 @@ const LIVE_ENROLMENT = 'WHERE tas_enrolment.deleted_at IS NULL';
  * @param studentIdSql An expression evaluating to the student id to test, such
  *   as `student.id` or `attendance.student_id`.
  */
+/**
+ * Whether the acting teacher supervises a class, in the current session.
+ *
+ * A narrower rule than reaching a student, and deliberately so. Blueprint
+ * section 95 says a teacher marks attendance for the students they supervise and
+ * must not mark another class: taking the school-day register is the form
+ * teacher's job, not something every subject teacher may do for every class they
+ * teach one lesson in. Reading is the wider rule, marking is this one.
+ *
+ * When subject attendance arrives, the marker for a `SUBJECT_CLASS` record is
+ * the teacher of that subject, which is the second branch of
+ * `teacherReachesStudent` rather than this.
+ *
+ * @param classIdSql An expression evaluating to the class id to test.
+ */
+export function teacherSupervisesClass(classIdSql: string, actor: Actor): ScopeFragment {
+  return {
+    sql: `${classIdSql} IN (
+      SELECT tas_supervisor.class_id
+        FROM class_supervisors tas_supervisor
+        JOIN classes tas_class
+          ON tas_class.id = tas_supervisor.class_id
+         AND tas_class.deleted_at IS NULL
+        JOIN academic_sessions tas_session
+          ON tas_session.id = tas_class.session_id
+         AND tas_session.is_current
+         AND tas_session.deleted_at IS NULL
+        ${heldByActor('tas_supervisor.teacher_id')}
+       WHERE tas_supervisor.deleted_at IS NULL
+    )`,
+    params: { [ACTOR_PARAM]: actor.userId },
+  };
+}
+
 export function teacherReachesStudent(studentIdSql: string, actor: Actor): ScopeFragment {
   const enrolment = currentEnrolment();
 
