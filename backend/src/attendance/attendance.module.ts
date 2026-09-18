@@ -6,6 +6,7 @@ import {
   EmployeeAttendanceController,
   StudentAttendanceController,
 } from './attendance.controller';
+import { AttendanceReportCache } from './attendance-report-cache';
 import { AttendanceService } from './attendance.service';
 import { AttendanceCorrection } from './entities/attendance-correction.entity';
 import { Attendance } from './entities/attendance.entity';
@@ -18,10 +19,9 @@ import { Attendance } from './entities/attendance.entity';
  * places them in a class, and who may mark or read it is decided by the role
  * rows those modules own.
  *
- * Sections 97 and 98, the daily, weekly, monthly, term and session reports and
- * the Redis summaries that cache them, are deliberately not here. They are a
- * reporting surface over this table and they arrive in BE-AT02, with the cache
- * invalidation the writes here will feed.
+ * Sections 97 and 98 arrived in BE-AT02: reports over the same scoped query as
+ * the record list, and whole-school summaries cached in Redis under a per-school
+ * generation that every attendance write moves on.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([Attendance, AttendanceCorrection])],
@@ -30,6 +30,6 @@ import { Attendance } from './entities/attendance.entity';
     EmployeeAttendanceController,
     AttendanceRecordsController,
   ],
-  providers: [AttendanceService],
+  providers: [AttendanceService, AttendanceReportCache],
 })
 export class AttendanceModule {}
