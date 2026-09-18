@@ -1,6 +1,10 @@
+import { appendFileSync } from 'node:fs';
+
 import { DataSource } from 'typeorm';
 
 import { ReadAttendanceAction } from '../src/attendance/read-attendance.action';
+import { ReportAttendanceAction } from '../src/attendance/report-attendance.action';
+import { ReportGrouping, ReportPeriod } from '../src/attendance/report-period';
 import { Role } from '../src/auth/permission.matrix';
 import { rolesOfMembership } from '../src/tenancy/membership-roles';
 import { runWithRequestContext } from '../src/tenancy/request-context';
@@ -15,7 +19,8 @@ import { seedMember } from './people.fixtures';
  * Blueprint section 54 is about schools with thousands of students, and
  * attendance is the largest table any of them will have: 2,000 children times
  * 180 school days is over a third of a million rows in one year. This suite
- * seeds 120,000 and asserts on the query plan.
+ * seeds a school year of registers, two terms of weekdays, about 300,000 rows,
+ * and asserts on the query plan.
  *
  * ## Why the plan rather than a stopwatch
  *
@@ -42,7 +47,9 @@ describe('attendance performance', () => {
 
   const STUDENTS = 2_000;
   const CLASSES = 40;
-  const DAYS = 60;
+  /** The two terms seeded: every weekday in them is a school day. */
+  const FIRST_TERM = ['2026-09-01', '2026-12-18'] as const;
+  const SECOND_TERM = ['2027-01-05', '2027-04-09'] as const;
 
   let teacherMembership: string;
   let classId: string;
@@ -135,18 +142,35 @@ describe('attendance performance', () => {
       [SCHOOL, year.sessionId, classIds, CLASSES],
     );
 
-    // Sixty school days for each of them: 120,000 rows.
-    await owner.query(
-      `INSERT INTO attendance
-         (tenant_id, attendance_type, date, status, marked_by,
-          student_id, enrolment_id, class_id, session_id, term_id)
-       SELECT $1, 'STUDENT', day::date, 'PRESENT', $2,
-              enrolment.student_id, enrolment.id, enrolment.class_id, enrolment.session_id, $3
-         FROM class_enrolments enrolment,
-              generate_series('2026-09-01'::date, '2026-09-01'::date + ($4 - 1), '1 day') AS day
-        WHERE enrolment.tenant_id = $1`,
-      [SCHOOL, admin.membershipId, year.termId, DAYS],
+    // A school year of registers: every weekday of two terms, for every child.
+    // Mostly present, with absences and lateness spread deterministically, so the
+    // counts in a report are not all one status.
+    const [secondTerm] = await owner.query<Array<{ id: string }>>(
+      `INSERT INTO terms (tenant_id, session_id, name, starts_on, ends_on)
+       VALUES ($1, $2, 'Second Term', $3, $4) RETURNING id`,
+      [SCHOOL, year.sessionId, SECOND_TERM[0], SECOND_TERM[1]],
     );
+
+    for (const [termId, [from, to]] of [
+      [year.termId, FIRST_TERM],
+      [secondTerm.id, SECOND_TERM],
+    ] as const) {
+      await owner.query(
+        `INSERT INTO attendance
+           (tenant_id, attendance_type, date, status, marked_by,
+            student_id, enrolment_id, class_id, session_id, term_id)
+         SELECT $1, 'STUDENT', day::date,
+                (CASE abs(hashtext(enrolment.student_id::text || day::text)) % 20
+                   WHEN 0 THEN 'ABSENT' WHEN 1 THEN 'LATE' WHEN 2 THEN 'SICK' ELSE 'PRESENT'
+                 END)::attendance_status_enum,
+                $2, enrolment.student_id, enrolment.id, enrolment.class_id, enrolment.session_id, $3
+           FROM class_enrolments enrolment,
+                generate_series($4::date, $5::date, '1 day') AS day
+          WHERE enrolment.tenant_id = $1
+            AND extract(isodow FROM day) < 6`,
+        [SCHOOL, admin.membershipId, termId, from, to],
+      );
+    }
 
     // Without this the planner is working from an empty table's statistics, and
     // the plan asserted below would be a plan for a table that no longer exists.
@@ -164,7 +188,18 @@ describe('attendance performance', () => {
       [SCHOOL],
     );
 
-    expect(Number(row.count)).toBe(STUDENTS * DAYS);
+    const [days] = await owner.query<Array<{ count: string }>>(
+      `SELECT count(*) AS count FROM (
+         SELECT generate_series($1::date, $2::date, '1 day') AS day
+         UNION ALL
+         SELECT generate_series($3::date, $4::date, '1 day')
+       ) days WHERE extract(isodow FROM day) < 6`,
+      [...FIRST_TERM, ...SECOND_TERM],
+    );
+
+    // Every weekday of two terms for every child: a school year of registers.
+    expect(Number(row.count)).toBe(STUDENTS * Number(days.count));
+    expect(Number(row.count)).toBeGreaterThan(290_000);
 
     const [enrolled] = await owner.query<Array<{ count: string }>>(
       `SELECT count(*) AS count FROM class_enrolments WHERE tenant_id = $1 AND class_id = $2`,
@@ -247,5 +282,107 @@ describe('attendance performance', () => {
     // row is what took 1.46 seconds in BE-P01, and it would read just as well.
     expect(sql).toContain('IN (');
     expect(sql).not.toMatch(/EXISTS\s*\(/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // Reports
+  // -------------------------------------------------------------------------
+
+  describe('reports', () => {
+    const GROUPINGS = [ReportGrouping.Class, ReportGrouping.Student, ReportGrouping.Role];
+
+    /** The roles a caller holds, read from the database as the resolver reads them. */
+    async function rolesOf(userId: string): Promise<string[]> {
+      return userId === ADMIN_USER
+        ? [Role.SchoolAdmin]
+        : app.transaction(async (manager) => {
+            await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId]);
+
+            return rolesOfMembership(manager, SCHOOL, teacherMembership);
+          });
+    }
+
+    /** The statement a report runs, and its plan and measured time, as the caller. */
+    async function explainReport(userId: string, period: ReportPeriod, groupBy: ReportGrouping) {
+      const roles = await rolesOf(userId);
+
+      return runWithRequestContext(
+        { origin: 'http', tenantId: SCHOOL, userId, roles, requestId: 'report-plan' },
+        () =>
+          app.transaction(async (manager) => {
+            await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId]);
+            await manager.query(`SELECT set_config('app.current_tenant', $1, true)`, [SCHOOL]);
+
+            const action = new ReportAttendanceAction(manager);
+            const range = await action.resolvePeriod(period, '2026-10-14');
+            const [sql, parameters] = action.reportQuery(range, groupBy).getQueryAndParameters();
+            const [row] = await manager.query<
+              Array<{ 'QUERY PLAN': Array<{ Plan: PlanNode; 'Execution Time': number }> }>
+            >(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, parameters);
+            const explained = row['QUERY PLAN'][0];
+            const nodes = flatten(explained.Plan);
+
+            // Timings are recorded for the pull request's evidence, never
+            // asserted: wall-clock on a shared runner is not a property of the code.
+            if (process.env.REPORT_TIMINGS_FILE) {
+              const scans = nodes
+                .filter((node) => node['Relation Name'] === 'attendance')
+                .map((node) => node['Node Type'])
+                .join(', ');
+              appendFileSync(
+                process.env.REPORT_TIMINGS_FILE,
+                `${userId === ADMIN_USER ? 'administrator' : 'teacher      '}  ${period.padEnd(8)} ` +
+                  `by ${groupBy.padEnd(8)} ${explained['Execution Time'].toFixed(1).padStart(7)} ms   ${scans}
+`,
+              );
+            }
+
+            return { sql, nodes };
+          }),
+      );
+    }
+
+    const scanned = (nodes: PlanNode[]) =>
+      nodes.filter(
+        (node) => node['Node Type'] === 'Seq Scan' && node['Relation Name'] === 'attendance',
+      );
+
+    it.each(GROUPINGS)(
+      "answers an administrator's weekly report by %s from an index",
+      async (groupBy) => {
+        const { nodes } = await explainReport(ADMIN_USER, ReportPeriod.Weekly, groupBy);
+
+        expect(scanned(nodes)).toHaveLength(0);
+      },
+    );
+
+    it.each(GROUPINGS)("answers a teacher's weekly report by %s from an index", async (groupBy) => {
+      const { nodes } = await explainReport(TEACHER_USER, ReportPeriod.Weekly, groupBy);
+
+      expect(scanned(nodes)).toHaveLength(0);
+    });
+
+    it.each(GROUPINGS)(
+      'counts a whole session by %s without joining names onto every row',
+      async (groupBy) => {
+        // The regression this guards against was measured: joining student names
+        // onto each of the year's rows before grouping took a whole-school session
+        // report by student to over three seconds. The count now reads attendance
+        // alone and the grouped rows are labelled afterwards. A session report
+        // itself reads most of the school's year, so a sequential scan is the right
+        // plan there and is deliberately not asserted against.
+        const { sql } = await explainReport(ADMIN_USER, ReportPeriod.Session, groupBy);
+
+        expect(sql).not.toMatch(/\bJOIN\b/i);
+      },
+    );
+
+    it('records the teacher session timings too, for the evidence', async () => {
+      for (const groupBy of GROUPINGS) {
+        const { nodes } = await explainReport(TEACHER_USER, ReportPeriod.Session, groupBy);
+
+        expect(nodes.length).toBeGreaterThan(0);
+      }
+    });
   });
 });

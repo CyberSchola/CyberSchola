@@ -3,11 +3,13 @@ import { DataSource } from 'typeorm';
 import { AttendanceStatus, AttendanceType } from '../src/attendance/attendance.enums';
 import { ReadAttendanceCorrectionsAction } from '../src/attendance/read-attendance-corrections.action';
 import { ReadAttendanceAction } from '../src/attendance/read-attendance.action';
+import { ReportAttendanceAction } from '../src/attendance/report-attendance.action';
+import { ReportGrouping, ReportPeriod } from '../src/attendance/report-period';
 import { Role } from '../src/auth/permission.matrix';
 import { rolesOfMembership } from '../src/tenancy/membership-roles';
 import { runWithRequestContext } from '../src/tenancy/request-context';
 import { APP_ROLE_PASSWORD } from './app-database.env';
-import { seedAcademicYear, seedAttendance, seedClass } from './attendance.fixtures';
+import { SCHOOL_DAY, seedAcademicYear, seedAttendance, seedClass } from './attendance.fixtures';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
 import { seedMember, seedRoleRow } from './people.fixtures';
 
@@ -314,6 +316,71 @@ describe('attendance visibility', () => {
       expect((await historyVisibleTo(caller)).sort()).toEqual([...EXPECTED[caller]].sort());
     },
   );
+
+  /** Per kind of person: how many records of each status, and the total. */
+  type Tally = Record<string, Record<string, number>>;
+
+  /** A caller's weekly report by role, and the tally of the records the list gives them. */
+  async function reportAndList(caller: Caller): Promise<{ reported: Tally; listed: Tally }> {
+    const userId = userIds[caller];
+    const tenantId = schoolOf(caller);
+
+    const roles = await app.transaction(async (manager) => {
+      await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId]);
+
+      return rolesOfMembership(manager, tenantId, memberships[caller]);
+    });
+
+    return runWithRequestContext(
+      { origin: 'http', tenantId, userId, roles, requestId: 'report-parity' },
+      () =>
+        app.transaction(async (manager) => {
+          await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId]);
+          await manager.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+
+          const action = new ReportAttendanceAction(manager);
+          const period = await action.resolvePeriod(ReportPeriod.Weekly, SCHOOL_DAY);
+          const report = await action.summarise(period, ReportGrouping.Role);
+          const page = await action.list(
+            { from: period.from, to: period.to },
+            { limit: 100, offset: 0 },
+          );
+
+          const reported: Tally = {};
+          for (const row of report.rows) {
+            const { group, rate: _rate, ...counts } = row;
+            reported[group.id!] = { ...counts };
+          }
+
+          const listed: Tally = {};
+          for (const record of page.items) {
+            const kind = (listed[record.attendanceType] ??= {
+              present: 0,
+              absent: 0,
+              late: 0,
+              excused: 0,
+              sick: 0,
+              leave: 0,
+              total: 0,
+            });
+            kind[record.status.toLowerCase()] += 1;
+            kind.total += 1;
+          }
+
+          return { reported, listed };
+        }),
+    );
+  }
+
+  it.each(CALLERS)('%s: a report counts exactly the records the list returns', async (caller) => {
+    // Dalentin1's point on #17: a report must never show what GET /attendance
+    // would hide. Tied to the list rather than to numbers counted by hand, so
+    // if the two ever diverge for any caller, this fails.
+    const { reported, listed } = await reportAndList(caller);
+
+    expect(reported).toEqual(listed);
+    expect(Object.keys(listed).length).toBeGreaterThan(0);
+  });
 
   it('counts only what the caller may see, so paging cannot walk the boundary', async () => {
     const userId = userIds.parent;
