@@ -31,13 +31,11 @@ import { createServer } from 'node:http';
 export const DEMO_SCHOOL_ID = 'c5c10000-0000-4000-8000-000000000001';
 export const DEMO_OTHER_SCHOOL_ID = 'c5c10000-0000-4000-8000-000000000002';
 export const DEMO_USERS = [
-  { key: 'admin', userId: 'd3300000-0000-4000-8000-000000000001', label: 'School administrator, Greenfield College' },
-  { key: 'teacher', userId: 'd3300000-0000-4000-8000-000000000002', label: 'Adaeze Okonkwo, teacher and JSS 2 A form teacher' },
-  { key: 'teacherParent', userId: 'd3300000-0000-4000-8000-000000000003', label: 'Obi Nwosu, teacher, and father of Tunde in JSS 2 B' },
-  { key: 'parent', userId: 'd3300000-0000-4000-8000-000000000004', label: 'Funmi Abubakar, parent of Zainab' },
-  { key: 'student', userId: 'd3300000-0000-4000-8000-000000000005', label: 'Zainab Abubakar, pupil in JSS 2 A' },
-  { key: 'staff', userId: 'd3300000-0000-4000-8000-000000000006', label: 'Bayo Adewale, bursar (staff)' },
-  { key: 'otherSchoolAdmin', userId: 'd3300000-0000-4000-8000-000000000007', label: 'Administrator of Brookvale Academy, a different school' },
+  { key: 'admin', userId: 'd3300000-0000-4000-8000-000000000001', label: 'School administrator, CyberSchola Demo College' },
+  { key: 'mathsTeacher', userId: 'd3300000-0000-4000-8000-000000000002', label: 'Adewale Ibrahim, Mathematics teacher, SS2 A' },
+  { key: 'physicsTeacher', userId: 'd3300000-0000-4000-8000-000000000003', label: 'Chinedu Eze, Physics teacher, SS2 A' },
+  { key: 'student', userId: 'd3300000-0000-4000-8000-000000000004', label: 'Daniel Okafor, pupil in SS2 A' },
+  { key: 'otherSchoolAdmin', userId: 'd3300000-0000-4000-8000-000000000005', label: 'Administrator of Brookvale Academy, a different school' },
 ];
 
 const TOKEN_LIFETIME_SECONDS = 60 * 60;
@@ -130,11 +128,11 @@ function page(tokens) {
       <li>Copy a token below. Each is valid for one hour; reload this page for fresh ones.</li>
       <li>In the API documentation, press <strong>Authorize</strong> and paste it.</li>
       <li>Send the school id shown beside it as the <code>X-School-Id</code> header if the person belongs to more than one school. Every demo person here belongs to one, so this is optional.</li>
-      <li>Try <code>GET /api/v1/students</code> as each person: the administrator sees the school, the teacher their pupils, the parent their child, and Brookvale's administrator none of Greenfield's.</li>
+      <li>Try <code>GET /api/v1/students</code> as each person: the administrator sees the whole of SS2 A, a teacher the pupils they teach, Daniel only himself, and Brookvale's administrator none of CyberSchola Demo College's.</li>
     </ol>
     <table>${rows}</table>
   </div>
-  <p class="note">Demo data only. Greenfield College and Brookvale Academy are rebuilt every night at 03:00 UTC, so feel free to change things. These tokens are accepted only by this staging server.</p>
+  <p class="note">Demo data only: CyberSchola Demo College, 2025/2026 Second Term, SS2 A. It and Brookvale Academy are rebuilt every night at 03:00 UTC, so feel free to change things. These tokens are accepted only by this staging server.</p>
 </main>
 <script>
   for (const button of document.querySelectorAll('button[data-token]')) {
@@ -162,6 +160,12 @@ function serve({ issuerBase, keyFile, port }) {
       });
       response.end(body);
     };
+
+    // HEAD answers like GET without a body, so uptime checks work.
+    if (request.method === 'HEAD') {
+      response.writeHead(path === '/' || path === '' ? 200 : 404, { 'cache-control': 'no-store' });
+      return response.end();
+    }
 
     if (request.method !== 'GET') {
       return send(405, 'text/plain', 'Method not allowed');

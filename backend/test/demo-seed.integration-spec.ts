@@ -1,6 +1,7 @@
 import { DataSource } from 'typeorm';
 
 import { seedDemo } from '../src/database/seeds/demo-seed';
+import { DEMO_STUDENTS } from '../src/database/seeds/demo-dataset';
 import { DEMO_OTHER_SCHOOL_ID, DEMO_SCHOOL_ID, DEMO_USERS } from '../src/database/seeds/demo-users';
 import { APP_ROLE_PASSWORD } from './app-database.env';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
@@ -85,13 +86,51 @@ describe('the demo seed', () => {
         GROUP BY m.user_id`,
     );
     const byUser = new Map(rows.map((row) => [row.user_id, row.roles]));
+    const roleOf = (key: string) => byUser.get(DEMO_USERS.find((user) => user.key === key)!.userId);
 
-    for (const user of DEMO_USERS) {
-      expect(byUser.get(user.userId)?.length).toBeGreaterThan(0);
+    expect(roleOf('admin')).toEqual(['SCHOOL_ADMIN']);
+    expect(roleOf('mathsTeacher')).toEqual(['TEACHER']);
+    expect(roleOf('physicsTeacher')).toEqual(['TEACHER']);
+    expect(roleOf('student')).toEqual(['STUDENT']);
+    expect(roleOf('otherSchoolAdmin')).toEqual(['SCHOOL_ADMIN']);
+  });
+
+  it("enrols the plan's twelve pupils in SS2 A, and five subjects with their teachers", async () => {
+    const [row] = await owner.query<Array<{ pupils: string; subjects: string; label: string }>>(
+      `SELECT (SELECT count(*) FROM class_enrolments e WHERE e.class_id = c.id) AS pupils,
+              (SELECT count(*) FROM class_subjects s WHERE s.class_id = c.id) AS subjects,
+              g.name || ' ' || c.arm AS label
+         FROM classes c JOIN grade_levels g ON g.id = c.grade_level_id
+        WHERE c.tenant_id = $1`,
+      [DEMO_SCHOOL_ID],
+    );
+
+    expect(row).toEqual({ pupils: '12', subjects: '5', label: 'SS2 A' });
+  });
+
+  it("gives each pupil a Second Term register matching the plan's attendance figure exactly", async () => {
+    const rows = await owner.query<Array<{ name: string; days: string; present: string }>>(
+      `SELECT s.first_name || ' ' || s.last_name AS name,
+              count(a.id) AS days,
+              count(a.id) FILTER (WHERE a.status = 'PRESENT') AS present
+         FROM students s
+         LEFT JOIN attendance a ON a.student_id = s.id
+        WHERE s.tenant_id = $1
+        GROUP BY s.id`,
+      [DEMO_SCHOOL_ID],
+    );
+    const byName = new Map(rows.map((row) => [row.name, row]));
+
+    for (const student of DEMO_STUDENTS) {
+      const row = byName.get(`${student.firstName} ${student.lastName}`)!;
+
+      if (student.attendancePercent === null) {
+        // Esther Williams: enrolled, with no register, as the plan has no figure.
+        expect(row.days).toBe('0');
+      } else {
+        expect(row).toMatchObject({ days: '100', present: String(student.attendancePercent) });
+      }
     }
-    // One login holding two roles, as a teacher whose child attends the school.
-    const teacherParent = DEMO_USERS.find((user) => user.key === 'teacherParent')!.userId;
-    expect([...(byUser.get(teacherParent) ?? [])].sort()).toEqual(['PARENT', 'TEACHER']);
   });
 
   it("keeps each school's data inside that school for the application role", async () => {

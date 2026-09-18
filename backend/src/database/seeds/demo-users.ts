@@ -7,6 +7,10 @@
  * keeps its own copy, since it runs without this package, and a unit test
  * holds the two lists equal.
  *
+ * The school and its people are the hackathon demo dataset. Brookvale Academy
+ * is not part of it: it is a second school that exists only so the demo can
+ * show one school never seeing another's data.
+ *
  * None of these can sign in anywhere real. A token is only accepted by an API
  * configured to trust the staging demo issuer, which production refuses to be.
  */
@@ -23,36 +27,26 @@ export const DEMO_USERS: readonly DemoUser[] = [
   {
     key: 'admin',
     userId: 'd3300000-0000-4000-8000-000000000001',
-    label: 'School administrator, Greenfield College',
+    label: 'School administrator, CyberSchola Demo College',
   },
   {
-    key: 'teacher',
+    key: 'mathsTeacher',
     userId: 'd3300000-0000-4000-8000-000000000002',
-    label: 'Adaeze Okonkwo, teacher and JSS 2 A form teacher',
+    label: 'Adewale Ibrahim, Mathematics teacher, SS2 A',
   },
   {
-    key: 'teacherParent',
+    key: 'physicsTeacher',
     userId: 'd3300000-0000-4000-8000-000000000003',
-    label: 'Obi Nwosu, teacher, and father of Tunde in JSS 2 B',
-  },
-  {
-    key: 'parent',
-    userId: 'd3300000-0000-4000-8000-000000000004',
-    label: 'Funmi Abubakar, parent of Zainab',
+    label: 'Chinedu Eze, Physics teacher, SS2 A',
   },
   {
     key: 'student',
-    userId: 'd3300000-0000-4000-8000-000000000005',
-    label: 'Zainab Abubakar, pupil in JSS 2 A',
-  },
-  {
-    key: 'staff',
-    userId: 'd3300000-0000-4000-8000-000000000006',
-    label: 'Bayo Adewale, bursar (staff)',
+    userId: 'd3300000-0000-4000-8000-000000000004',
+    label: 'Daniel Okafor, pupil in SS2 A',
   },
   {
     key: 'otherSchoolAdmin',
-    userId: 'd3300000-0000-4000-8000-000000000007',
+    userId: 'd3300000-0000-4000-8000-000000000005',
     label: 'Administrator of Brookvale Academy, a different school',
   },
 ];

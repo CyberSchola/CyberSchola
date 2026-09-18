@@ -3,11 +3,19 @@ import 'reflect-metadata';
 import { DataSource, type EntityManager } from 'typeorm';
 
 import { migrationDataSourceOptions } from '../data-source';
+import {
+  absentDayIndexes,
+  DEMO_SCHOOL,
+  DEMO_STUDENTS,
+  DEMO_SUBJECTS,
+  demoTermSchoolDays,
+} from './demo-dataset';
 import { DEMO_OTHER_SCHOOL_ID, DEMO_SCHOOL_ID, DEMO_USERS } from './demo-users';
 
 /**
- * Seeds the staging demo: Greenfield College, with a week of school in it, and
- * Brookvale Academy beside it so the tenant boundary has something to prove.
+ * Seeds the staging demo: CyberSchola Demo College, built from the hackathon
+ * demo dataset in `demo-dataset.ts`, and Brookvale Academy beside it so the
+ * tenant boundary has something to prove.
  *
  * Run it with the compiled output, as the database owner:
  *
@@ -16,7 +24,7 @@ import { DEMO_OTHER_SCHOOL_ID, DEMO_SCHOOL_ID, DEMO_USERS } from './demo-users';
  * It rebuilds both schools from nothing every time. Visitors to a public demo
  * sign in as an administrator and change things, so staging resets this on a
  * schedule, and a partial rerun that layered new rows over old ones would drift
- * away from what the demo page describes.
+ * away from the dataset.
  *
  * It refuses to run unless NODE_ENV is staging or development. The two schools
  * have fixed ids, and deleting a school by id is exactly the statement that must
@@ -51,7 +59,7 @@ async function membership(manager: EntityManager, tenantId: string, user: string
 
 async function person(
   manager: EntityManager,
-  table: 'teachers' | 'students' | 'parents' | 'staff',
+  table: 'teachers' | 'students',
   tenantId: string,
   membershipId: string | null,
   firstName: string,
@@ -65,206 +73,161 @@ async function person(
   );
 }
 
-async function seedGreenfield(manager: EntityManager): Promise<void> {
+/** Which demo people sign in as which teacher, by subject. */
+const TEACHER_LOGINS: Partial<Record<(typeof DEMO_SUBJECTS)[number]['key'], string>> = {
+  maths: 'mathsTeacher',
+  physics: 'physicsTeacher',
+};
+
+/** The ids the rest of the seed, and the results seed after it, build on. */
+export interface SeededDemoSchool {
+  readonly adminMembershipId: string;
+  readonly sessionId: string;
+  readonly termId: string;
+  readonly classId: string;
+  readonly classSubjectIds: Readonly<Record<string, string>>;
+  readonly enrolments: ReadonlyArray<{
+    readonly studentId: string;
+    readonly enrolmentId: string;
+    readonly firstName: string;
+    readonly lastName: string;
+  }>;
+}
+
+async function seedDemoCollege(manager: EntityManager): Promise<SeededDemoSchool> {
   const school = DEMO_SCHOOL_ID;
 
-  await manager.query(
-    `INSERT INTO tenants (id, name, slug) VALUES ($1, 'Greenfield College', 'greenfield-demo')`,
-    [school],
-  );
-
-  // People. Logins first, then the records that give each login its role.
-  const adminMembership = await membership(manager, school, userId('admin'));
-  await manager.query(`INSERT INTO school_admins (tenant_id, membership_id) VALUES ($1, $2)`, [
+  await manager.query(`INSERT INTO tenants (id, name, slug) VALUES ($1, $2, $3)`, [
     school,
-    adminMembership,
+    DEMO_SCHOOL.name,
+    DEMO_SCHOOL.slug,
   ]);
 
-  const adaeze = await person(
-    manager,
-    'teachers',
+  const adminMembershipId = await membership(manager, school, userId('admin'));
+  await manager.query(`INSERT INTO school_admins (tenant_id, membership_id) VALUES ($1, $2)`, [
     school,
-    await membership(manager, school, userId('teacher')),
-    'Adaeze',
-    'Okonkwo',
-  );
-  const obiMembership = await membership(manager, school, userId('teacherParent'));
-  const obi = await person(manager, 'teachers', school, obiMembership, 'Obi', 'Nwosu');
-  const obiAsParent = await person(manager, 'parents', school, obiMembership, 'Obi', 'Nwosu');
-  const chidi = await person(manager, 'teachers', school, null, 'Chidi', 'Eze');
-  const ngozi = await person(manager, 'teachers', school, null, 'Ngozi', 'Bello');
-  const funmi = await person(
-    manager,
-    'parents',
-    school,
-    await membership(manager, school, userId('parent')),
-    'Funmi',
-    'Abubakar',
-  );
-  const bayo = await person(
-    manager,
-    'staff',
-    school,
-    await membership(manager, school, userId('staff')),
-    'Bayo',
-    'Adewale',
-  );
+    adminMembershipId,
+  ]);
 
-  const zainab = await person(
-    manager,
-    'students',
-    school,
-    await membership(manager, school, userId('student')),
-    'Zainab',
-    'Abubakar',
-  );
-  const pupils = {
-    zainab,
-    kemi: await person(manager, 'students', school, null, 'Kemi', 'Adeyemi'),
-    emeka: await person(manager, 'students', school, null, 'Emeka', 'Obi'),
-    tunde: await person(manager, 'students', school, null, 'Tunde', 'Nwosu'),
-    amara: await person(manager, 'students', school, null, 'Amara', 'Eze'),
-    dami: await person(manager, 'students', school, null, 'Dami', 'Afolabi'),
-  };
-
-  await manager.query(
-    `INSERT INTO guardianships (tenant_id, parent_id, student_id)
-     VALUES ($1, $2, $3), ($1, $4, $5)`,
-    [school, funmi, pupils.zainab, obiAsParent, pupils.tunde],
-  );
-
-  // The academic year.
-  const session = await one(
+  // The academic year and the demo term.
+  const sessionId = await one(
     manager,
     `INSERT INTO academic_sessions (tenant_id, name, starts_on, ends_on, is_current)
-     VALUES ($1, '2026/2027', '2026-09-01', '2027-07-31', true) RETURNING id`,
-    [school],
+     VALUES ($1, $2, $3, $4, true) RETURNING id`,
+    [school, DEMO_SCHOOL.session.name, DEMO_SCHOOL.session.startsOn, DEMO_SCHOOL.session.endsOn],
   );
-  const term = await one(
-    manager,
-    `INSERT INTO terms (tenant_id, session_id, name, starts_on, ends_on)
-     VALUES ($1, $2, 'First Term', '2026-09-07', '2026-12-18') RETURNING id`,
-    [school, session],
-  );
-  const grade = await one(
-    manager,
-    `INSERT INTO grade_levels (tenant_id, name, position) VALUES ($1, 'JSS 2', 8) RETURNING id`,
-    [school],
-  );
-  const classOf = (arm: string) =>
-    one(
-      manager,
-      `INSERT INTO classes (tenant_id, session_id, grade_level_id, arm)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [school, session, grade, arm],
+  for (const term of [DEMO_SCHOOL.firstTerm, DEMO_SCHOOL.demoTerm]) {
+    await manager.query(
+      `INSERT INTO terms (tenant_id, session_id, name, starts_on, ends_on) VALUES ($1, $2, $3, $4, $5)`,
+      [school, sessionId, term.name, term.startsOn, term.endsOn],
     );
-  const jss2a = await classOf('A');
-  const jss2b = await classOf('B');
+  }
+  const termId = await one(manager, `SELECT id FROM terms WHERE tenant_id = $1 AND name = $2`, [
+    school,
+    DEMO_SCHOOL.demoTerm.name,
+  ]);
 
-  const subject = (name: string, code: string) =>
-    one(manager, `INSERT INTO subjects (tenant_id, name, code) VALUES ($1, $2, $3) RETURNING id`, [
-      school,
-      name,
-      code,
-    ]);
-  const maths = await subject('Mathematics', 'MTH');
-  const english = await subject('English', 'ENG');
-  const science = await subject('Basic Science', 'BSC');
-  const french = await subject('French', 'FRE');
-  const arabic = await subject('Arabic', 'ARA');
-
-  // Who teaches what, and who is responsible for each class.
-  await manager.query(
-    `INSERT INTO class_supervisors (tenant_id, class_id, teacher_id) VALUES ($1, $2, $3), ($1, $4, $5)`,
-    [school, jss2a, adaeze, jss2b, obi],
+  const gradeId = await one(
+    manager,
+    `INSERT INTO grade_levels (tenant_id, name, position) VALUES ($1, $2, $3) RETURNING id`,
+    [school, DEMO_SCHOOL.grade.name, DEMO_SCHOOL.grade.position],
   );
-  const teaches = (classId: string, subjectId: string, teacherId: string, elective = false) =>
-    one(
+  const classId = await one(
+    manager,
+    `INSERT INTO classes (tenant_id, session_id, grade_level_id, arm) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [school, sessionId, gradeId, DEMO_SCHOOL.arm],
+  );
+
+  // Five subjects, each taught in SS2 A by its teacher. Two teachers can sign in.
+  const classSubjectIds: Record<string, string> = {};
+
+  for (const subject of DEMO_SUBJECTS) {
+    const subjectId = await one(
+      manager,
+      `INSERT INTO subjects (tenant_id, name, code) VALUES ($1, $2, $3) RETURNING id`,
+      [school, subject.name, subject.code],
+    );
+    const login = TEACHER_LOGINS[subject.key];
+    const teacherId = await person(
+      manager,
+      'teachers',
+      school,
+      login ? await membership(manager, school, userId(login)) : null,
+      subject.teacher.firstName,
+      subject.teacher.lastName,
+    );
+
+    classSubjectIds[subject.key] = await one(
       manager,
       `INSERT INTO class_subjects (tenant_id, class_id, subject_id, teacher_id, is_elective)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [school, classId, subjectId, teacherId, elective],
+       VALUES ($1, $2, $3, $4, false) RETURNING id`,
+      [school, classId, subjectId, teacherId],
     );
-  await teaches(jss2a, maths, adaeze);
-  await teaches(jss2a, english, obi);
-  await teaches(jss2a, science, chidi);
-  const aFrench = await teaches(jss2a, french, chidi, true);
-  const aArabic = await teaches(jss2a, arabic, ngozi, true);
-  await teaches(jss2b, maths, adaeze);
-  await teaches(jss2b, english, obi);
-  await teaches(jss2b, science, ngozi);
-
-  // Pupils in classes, and in the electives they chose.
-  const enrolments: Record<string, { id: string; classId: string }> = {};
-
-  for (const [name, classId] of [
-    ['zainab', jss2a],
-    ['kemi', jss2a],
-    ['emeka', jss2a],
-    ['tunde', jss2b],
-    ['amara', jss2b],
-    ['dami', jss2b],
-  ] as const) {
-    enrolments[name] = {
-      classId,
-      id: await one(
-        manager,
-        `INSERT INTO class_enrolments (tenant_id, class_id, session_id, student_id)
-         VALUES ($1, $2, $3, $4) RETURNING id`,
-        [school, classId, session, pupils[name]],
-      ),
-    };
   }
 
-  await manager.query(
-    `INSERT INTO elective_registrations (tenant_id, class_subject_id, student_id)
-     VALUES ($1, $2, $3), ($1, $2, $4), ($1, $5, $4), ($1, $5, $6)`,
-    [school, aFrench, pupils.zainab, pupils.kemi, aArabic, pupils.emeka],
-  );
+  // The twelve pupils, enrolled in SS2 A. Daniel Okafor can sign in.
+  const enrolments: Array<SeededDemoSchool['enrolments'][number]> = [];
 
-  // Registers for Monday to Thursday of the second week of term, mostly
-  // present, so reports and the records list have something to show.
-  const days = ['2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17'];
-  const absent = new Set(['kemi@2026-09-15', 'amara@2026-09-16']);
-  const late = new Set(['emeka@2026-09-14', 'dami@2026-09-17']);
+  for (const student of DEMO_STUDENTS) {
+    const isLogin = student.firstName === 'Daniel' && student.lastName === 'Okafor';
+    const studentId = await person(
+      manager,
+      'students',
+      school,
+      isLogin ? await membership(manager, school, userId('student')) : null,
+      student.firstName,
+      student.lastName,
+    );
+    const enrolmentId = await one(
+      manager,
+      `INSERT INTO class_enrolments (tenant_id, class_id, session_id, student_id)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [school, classId, sessionId, studentId],
+    );
 
-  for (const date of days) {
-    for (const [name, enrolment] of Object.entries(enrolments)) {
-      const key = `${name}@${date}`;
-      const status = absent.has(key) ? 'ABSENT' : late.has(key) ? 'LATE' : 'PRESENT';
-
-      await manager.query(
-        `INSERT INTO attendance
-           (tenant_id, attendance_type, date, status, marked_by,
-            student_id, enrolment_id, class_id, session_id, term_id)
-         VALUES ($1, 'STUDENT', $2::date, $3, $4, $5, $6, $7, $8, $9)`,
-        [
-          school,
-          date,
-          status,
-          adminMembership,
-          pupils[name as keyof typeof pupils],
-          enrolment.id,
-          enrolment.classId,
-          session,
-          term,
-        ],
-      );
-    }
-
-    // Employees' days carry no class, session or term: those describe a pupil's
-    // enrolment, and the table's check refuses them on anyone else's record.
-    for (const [column, id] of [
-      ['teacher_id', adaeze],
-      ['staff_id', bayo],
-    ] as const) {
-      await manager.query(
-        `INSERT INTO attendance (tenant_id, attendance_type, date, status, marked_by, ${column})
-         VALUES ($1, $2, $3::date, 'PRESENT', $4, $5)`,
-        [school, column === 'teacher_id' ? 'TEACHER' : 'STAFF', date, adminMembership, id],
-      );
-    }
+    enrolments.push({
+      studentId,
+      enrolmentId,
+      firstName: student.firstName,
+      lastName: student.lastName,
+    });
   }
+
+  // A register for every school day of the demo term, one row per pupil per
+  // day, matching each pupil's attendance figure exactly.
+  const days = demoTermSchoolDays();
+
+  for (const [index, student] of DEMO_STUDENTS.entries()) {
+    if (student.attendancePercent === null) {
+      continue;
+    }
+
+    const absent = absentDayIndexes(student.attendancePercent, days.length);
+    const { studentId, enrolmentId } = enrolments[index];
+
+    await manager.query(
+      `INSERT INTO attendance
+         (tenant_id, attendance_type, date, status, marked_by,
+          student_id, enrolment_id, class_id, session_id, term_id)
+       SELECT $1, 'STUDENT', day.date::date,
+              (CASE WHEN day.ordinal - 1 = ANY($3::int[]) THEN 'ABSENT' ELSE 'PRESENT' END)::attendance_status_enum,
+              $4, $5, $6, $7, $8, $9
+         FROM unnest($2::text[]) WITH ORDINALITY AS day(date, ordinal)`,
+      [
+        school,
+        days,
+        [...absent],
+        adminMembershipId,
+        studentId,
+        enrolmentId,
+        classId,
+        sessionId,
+        termId,
+      ],
+    );
+  }
+
+  return { adminMembershipId, sessionId, termId, classId, classSubjectIds, enrolments };
 }
 
 async function seedBrookvale(manager: EntityManager): Promise<void> {
@@ -283,12 +246,12 @@ async function seedBrookvale(manager: EntityManager): Promise<void> {
   const session = await one(
     manager,
     `INSERT INTO academic_sessions (tenant_id, name, starts_on, ends_on, is_current)
-     VALUES ($1, '2026/2027', '2026-09-01', '2027-07-31', true) RETURNING id`,
+     VALUES ($1, '2025/2026', '2025-09-08', '2026-07-24', true) RETURNING id`,
     [school],
   );
   const grade = await one(
     manager,
-    `INSERT INTO grade_levels (tenant_id, name, position) VALUES ($1, 'JSS 1', 7) RETURNING id`,
+    `INSERT INTO grade_levels (tenant_id, name, position) VALUES ($1, 'SS2', 11) RETURNING id`,
     [school],
   );
   const classId = await one(
@@ -305,15 +268,17 @@ async function seedBrookvale(manager: EntityManager): Promise<void> {
   );
 }
 
-export async function seedDemo(dataSource: DataSource): Promise<void> {
-  await dataSource.transaction(async (manager) => {
+export async function seedDemo(dataSource: DataSource): Promise<SeededDemoSchool> {
+  return dataSource.transaction(async (manager) => {
     // Everything a school owns references it with ON DELETE CASCADE, so
     // removing the two schools removes every row the last run created.
     await manager.query(`DELETE FROM tenants WHERE id = ANY($1::uuid[])`, [
       [DEMO_SCHOOL_ID, DEMO_OTHER_SCHOOL_ID],
     ]);
-    await seedGreenfield(manager);
+    const demo = await seedDemoCollege(manager);
     await seedBrookvale(manager);
+
+    return demo;
   });
 }
 
@@ -332,7 +297,7 @@ async function main(): Promise<void> {
 
   try {
     await seedDemo(dataSource);
-    console.log('Demo schools seeded: Greenfield College and Brookvale Academy.');
+    console.log(`Demo schools seeded: ${DEMO_SCHOOL.name} and Brookvale Academy.`);
   } finally {
     await dataSource.destroy();
   }
