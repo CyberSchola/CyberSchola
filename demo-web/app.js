@@ -6,6 +6,8 @@
 // for the signed-in person. Hiding a menu item here is presentation only: the
 // API enforces every permission and scope regardless.
 
+import { renderLanding, renderSignIn } from './landing.js';
+
 const API = '/api/v1';
 const app = document.getElementById('app');
 
@@ -245,52 +247,15 @@ const tone = (value, low = 50, mid = 60) => (value == null ? '' : value < low ? 
 // ---------------------------------------------------------------- screens
 
 function renderLogin() {
-  app.innerHTML = `
-  <div class="login">
-    <section class="login-hero">
-      <div class="brand" style="padding:0">
-        <div class="brand-mark" style="background:rgba(255,255,255,.16)">${icon('spark', 20)}</div>
-        <div><div class="brand-name" style="color:#fff">CyberSchola</div><div class="brand-sub" style="color:#d9cdfa">SCHOOL INTELLIGENCE</div></div>
-      </div>
-      <div>
-        <h1>The school management platform with an AI Copilot for every role.</h1>
-        <p>Real school records, secured per school and per role, with Copilots that turn them into decisions.</p>
-        <div class="hero-points">
-          <div class="hero-point">${icon('lock', 20)}<div><strong>Secure by design</strong><span>Every school's data is isolated in the database, and every role sees only what it should.</span></div></div>
-          <div class="hero-point">${icon('spark', 20)}<div><strong>AI on your real data</strong><span>The Admin Copilot analyses actual results and attendance; the Teacher Copilot plans lessons.</span></div></div>
-        </div>
-      </div>
-      <div class="small" style="color:#cbbdf6">CyberSchola Demo College · 2025/2026 · Second Term</div>
-    </section>
-    <section class="login-panel">
-      <div class="login-card">
-        <h2>Sign in</h2>
-        <p class="muted">Choose a demo account for CyberSchola Demo College.</p>
-        <div class="account-list">
-          ${ACCOUNTS.map((account, index) => `
-            <button class="account" data-account="${index}">
-              <div class="avatar">${esc(initials(account.name))}</div>
-              <div class="who"><strong>${esc(account.name)}</strong><span class="muted small">${esc(account.title)}</span></div>
-              <span class="role">${esc(account.role)}</span>
-            </button>`).join('')}
-        </div>
-        <p class="muted small">Each account signs in with a real, time-limited token. What you see is exactly what the platform authorizes for that person.</p>
-      </div>
-    </section>
-  </div>`;
-
-  document.querySelectorAll('[data-account]').forEach((button) => {
-    button.onclick = async () => {
-      button.disabled = true;
-      button.querySelector('.role').textContent = 'Signing in…';
-      try {
-        await signIn(ACCOUNTS[Number(button.dataset.account)]);
-      } catch (error) {
-        toast(error.message, true);
-        renderLogin();
-      }
-    };
+  renderSignIn(app, {
+    accounts: ACCOUNTS,
+    onPick: signIn,
+    onHome: () => (location.hash = '#/'),
   });
+}
+
+function renderHome() {
+  renderLanding(app, { onSignIn: () => (location.hash = session.token ? '#/dashboard' : '#/login') });
 }
 
 async function renderDashboard() {
@@ -1130,12 +1095,38 @@ function renderSoon(key) {
 
 // ---------------------------------------------------------------- router
 
+/** Which kind of page is showing, so only moves between kinds animate. */
+let lastKind = null;
+
+/**
+ * Cross-fades between the home page, sign-in and the app with the View
+ * Transitions API where the browser has it. Moves within the app stay instant.
+ */
+function transition(kind, render) {
+  const animate = lastKind !== null && lastKind !== kind && document.startViewTransition
+    && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  lastKind = kind;
+  if (!animate) return render();
+  document.startViewTransition(() => { render(); });
+}
+
 async function route() {
-  const hash = location.hash || '#/login';
+  const hash = location.hash || '#/';
+  app.__cleanup?.();
+  app.__cleanup = null;
+
+  if (hash === '#/' || hash === '#/home') {
+    window.scrollTo(0, 0);
+    return transition('home', renderHome);
+  }
 
   if (!session.token) {
-    if (hash !== '#/login') location.hash = '#/login';
-    return renderLogin();
+    if (hash !== '#/login') {
+      location.hash = '#/login';
+      return;
+    }
+    window.scrollTo(0, 0);
+    return transition('signin', renderLogin);
   }
 
   if (!session.school) {
@@ -1160,7 +1151,7 @@ async function route() {
   };
 
   window.scrollTo(0, 0);
-  return (pages[page] ?? renderDashboard)();
+  return transition('app', () => (pages[page] ?? renderDashboard)());
 }
 
 window.addEventListener('hashchange', route);
