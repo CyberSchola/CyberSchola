@@ -140,7 +140,7 @@ export function renderLanding(root, { onSignIn }) {
       <div class="lp-grid" aria-hidden="true"></div>
       <div class="lp-wrap">
         <div class="lp-hero-copy">
-          <span class="lp-pill lp-fade-up"><b>Live demo</b><span class="lp-live-dot"></span> Built for secondary schools in Nigeria, starting in Lagos</span>
+          <a class="lp-pill lp-fade-up" href="#copilots" data-scroll><span class="lp-pill-spark">${svg('spark', 13, 2.2)}</span> Three Copilots working today <span class="lp-pill-more">See them ${svg('arrow', 13, 2.2)}</span></a>
           <h1>${h1}</h1>
           <p class="lp-hero-sub lp-fade-up" style="animation-delay:.95s">CyberSchola puts attendance, results, timetables and parent updates in one place, and gives every administrator, teacher, pupil and parent a Copilot that works from the school's own records.</p>
           <div class="lp-hero-cta lp-fade-up" style="animation-delay:1.1s">
