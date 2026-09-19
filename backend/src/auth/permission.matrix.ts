@@ -45,6 +45,9 @@ export enum Permission {
   SchoolRead = 'school.read',
   /** Change the school's own record. */
   SchoolUpdate = 'school.update',
+  /** Send a message to the AI assistant. Granted to every role: AI-02 has no
+   *  tool/data access yet, so this only gates reaching the model itself. */
+  AiChat = 'ai.chat',
   /** See the academic structure: sessions, terms, grade levels, classes, subjects. */
   AcademicRead = 'academic.read',
   /**
@@ -121,6 +124,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.MembershipWrite,
     Permission.SchoolRead,
     Permission.SchoolUpdate,
+    Permission.AiChat,
     Permission.AcademicRead,
     Permission.AcademicManage,
     Permission.StudentRead,
@@ -133,6 +137,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
   [Role.Teacher]: [
     Permission.MembershipRead,
     Permission.SchoolRead,
+    Permission.AiChat,
     Permission.AcademicRead,
     Permission.StudentRead,
     Permission.AttendanceRead,
@@ -142,6 +147,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
   [Role.Student]: [
     Permission.MembershipRead,
     Permission.SchoolRead,
+    Permission.AiChat,
     Permission.AcademicRead,
     Permission.StudentRead,
     Permission.AttendanceRead,
@@ -150,6 +156,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
   [Role.Parent]: [
     Permission.MembershipRead,
     Permission.SchoolRead,
+    Permission.AiChat,
     Permission.AcademicRead,
     Permission.StudentRead,
     Permission.AttendanceRead,
@@ -160,6 +167,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
   [Role.Staff]: [
     Permission.MembershipRead,
     Permission.SchoolRead,
+    Permission.AiChat,
     Permission.AcademicRead,
     Permission.AttendanceRead,
     Permission.AttendanceMark,

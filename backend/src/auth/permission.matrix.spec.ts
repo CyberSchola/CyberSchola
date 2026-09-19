@@ -29,6 +29,7 @@ describe('the permission matrix', () => {
       Permission.MembershipWrite,
       Permission.SchoolRead,
       Permission.SchoolUpdate,
+      Permission.AiChat,
       Permission.AcademicRead,
       Permission.AcademicManage,
       Permission.StudentRead,
@@ -36,25 +37,22 @@ describe('the permission matrix', () => {
       Permission.AttendanceRead,
       Permission.ResultRead,
       Permission.AttendanceMark,
-      // Correcting a recorded status is the administrator's alone, per blueprint
-      // section 95. A teacher who takes the wrong register asks for it to be
-      // changed, and section 96's trail records who actually changed it.
       Permission.AttendanceCorrect,
     ],
     [Role.Teacher]: [
       Permission.MembershipRead,
       Permission.SchoolRead,
+      Permission.AiChat,
       Permission.AcademicRead,
       Permission.StudentRead,
       Permission.AttendanceRead,
       Permission.ResultRead,
-      // Holding this is not the whole rule: which class they may mark is decided
-      // per request, from the classes they supervise this session.
       Permission.AttendanceMark,
     ],
     [Role.Student]: [
       Permission.MembershipRead,
       Permission.SchoolRead,
+      Permission.AiChat,
       Permission.AcademicRead,
       Permission.StudentRead,
       Permission.AttendanceRead,
@@ -63,22 +61,21 @@ describe('the permission matrix', () => {
     [Role.Parent]: [
       Permission.MembershipRead,
       Permission.SchoolRead,
+      Permission.AiChat,
       Permission.AcademicRead,
       Permission.StudentRead,
       Permission.AttendanceRead,
       Permission.ResultRead,
     ],
-    // Staff see and record their own attendance, and nothing about students:
-    // sections 18 and 95.
     [Role.Staff]: [
       Permission.MembershipRead,
       Permission.SchoolRead,
+      Permission.AiChat,
       Permission.AcademicRead,
       Permission.AttendanceRead,
       Permission.AttendanceMark,
     ],
   };
-
   describe.each(ROLES)('%s', (role) => {
     it.each(PERMISSIONS)('%s', (permission) => {
       const granted = EXPECTED[role].includes(permission);
