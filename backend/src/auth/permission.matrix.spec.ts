@@ -5,7 +5,9 @@ import {
   Role,
   permissionsFor,
   roleHasPermission,
+  rolesHavePermission,
   toRole,
+  toRoles,
 } from './permission.matrix';
 
 /**
@@ -27,12 +29,54 @@ describe('the permission matrix', () => {
       Permission.MembershipWrite,
       Permission.SchoolRead,
       Permission.SchoolUpdate,
-      Permission.AiChat,
+      Permission.AcademicRead,
+      Permission.AcademicManage,
+      Permission.StudentRead,
+      Permission.PeopleManage,
+      Permission.AttendanceRead,
+      Permission.ResultRead,
+      Permission.AttendanceMark,
+      // Correcting a recorded status is the administrator's alone, per blueprint
+      // section 95. A teacher who takes the wrong register asks for it to be
+      // changed, and section 96's trail records who actually changed it.
+      Permission.AttendanceCorrect,
     ],
-    [Role.Teacher]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
-    [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
-    [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
-    [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
+    [Role.Teacher]: [
+      Permission.MembershipRead,
+      Permission.SchoolRead,
+      Permission.AcademicRead,
+      Permission.StudentRead,
+      Permission.AttendanceRead,
+      Permission.ResultRead,
+      // Holding this is not the whole rule: which class they may mark is decided
+      // per request, from the classes they supervise this session.
+      Permission.AttendanceMark,
+    ],
+    [Role.Student]: [
+      Permission.MembershipRead,
+      Permission.SchoolRead,
+      Permission.AcademicRead,
+      Permission.StudentRead,
+      Permission.AttendanceRead,
+      Permission.ResultRead,
+    ],
+    [Role.Parent]: [
+      Permission.MembershipRead,
+      Permission.SchoolRead,
+      Permission.AcademicRead,
+      Permission.StudentRead,
+      Permission.AttendanceRead,
+      Permission.ResultRead,
+    ],
+    // Staff see and record their own attendance, and nothing about students:
+    // sections 18 and 95.
+    [Role.Staff]: [
+      Permission.MembershipRead,
+      Permission.SchoolRead,
+      Permission.AcademicRead,
+      Permission.AttendanceRead,
+      Permission.AttendanceMark,
+    ],
   };
 
   describe.each(ROLES)('%s', (role) => {
@@ -64,7 +108,9 @@ describe('the permission matrix', () => {
     const writers = ROLES.filter(
       (role) =>
         roleHasPermission(role, Permission.MembershipWrite) ||
-        roleHasPermission(role, Permission.SchoolUpdate),
+        roleHasPermission(role, Permission.SchoolUpdate) ||
+        roleHasPermission(role, Permission.AcademicManage) ||
+        roleHasPermission(role, Permission.PeopleManage),
     );
 
     expect(writers).toEqual([Role.SchoolAdmin]);
@@ -117,6 +163,56 @@ describe('the permission matrix', () => {
       }
 
       expect(roleHasPermission(Role.Teacher, Permission.SchoolUpdate)).toBe(before);
+    });
+  });
+  it('lets everyone but staff reach the student read path', () => {
+    // Reaching the endpoint is not seeing the school. The student scope narrows
+    // each of these to what blueprint sections 13, 14, 16 and 17 allow: a
+    // teacher's pupils, a parent's linked children, a student themselves. Staff
+    // are kept to their own information by section 18, so they are refused the
+    // route rather than handed an empty list.
+    const readers = ROLES.filter((role) => roleHasPermission(role, Permission.StudentRead));
+
+    expect(readers.sort()).toEqual(
+      [Role.SchoolAdmin, Role.Teacher, Role.Student, Role.Parent].sort(),
+    );
+  });
+
+  describe('several roles at once', () => {
+    it('grants what any one of them grants', () => {
+      expect(rolesHavePermission([Role.Parent, Role.SchoolAdmin], Permission.PeopleManage)).toBe(
+        true,
+      );
+    });
+
+    it('grants nothing that none of them grants', () => {
+      expect(rolesHavePermission([Role.Parent, Role.Teacher], Permission.PeopleManage)).toBe(false);
+    });
+
+    it('grants nothing for no roles, or for undefined', () => {
+      for (const permission of PERMISSIONS) {
+        expect(rolesHavePermission([], permission)).toBe(false);
+        expect(rolesHavePermission(undefined, permission)).toBe(false);
+      }
+    });
+
+    it('ignores an unknown role beside a known one rather than failing the known one', () => {
+      expect(rolesHavePermission(['SUPER_ADMIN', Role.Teacher], Permission.StudentRead)).toBe(true);
+      expect(rolesHavePermission(['SUPER_ADMIN', Role.Teacher], Permission.PeopleManage)).toBe(
+        false,
+      );
+    });
+  });
+
+  describe('toRoles', () => {
+    it('keeps known roles and drops the rest', () => {
+      expect([...toRoles(['TEACHER', 'SUPER_ADMIN', 'PARENT', 'teacher'])].sort()).toEqual(
+        [Role.Parent, Role.Teacher].sort(),
+      );
+    });
+
+    it('is empty for nothing', () => {
+      expect(toRoles(undefined).size).toBe(0);
     });
   });
 });

@@ -5,6 +5,8 @@ import { DataSource, type EntityManager } from 'typeorm';
 import { migrationDataSourceOptions } from '../data-source';
 import {
   absentDayIndexes,
+  DEMO_ASSESSMENTS,
+  DEMO_RESULTS,
   DEMO_SCHOOL,
   DEMO_STUDENTS,
   DEMO_SUBJECTS,
@@ -225,6 +227,43 @@ async function seedDemoCollege(manager: EntityManager): Promise<SeededDemoSchool
         termId,
       ],
     );
+  }
+
+  // Second Term results: CA1, CA2 and the exam for every subject, as the plan
+  // gives them. Pupils the plan has no scores for get none.
+  for (const enrolment of enrolments) {
+    const scores = DEMO_RESULTS[`${enrolment.firstName} ${enrolment.lastName}`];
+
+    if (scores === undefined) {
+      continue;
+    }
+
+    for (const [subjectIndex, subject] of DEMO_SUBJECTS.entries()) {
+      for (const [assessmentIndex, assessment] of DEMO_ASSESSMENTS.entries()) {
+        await manager.query(
+          `INSERT INTO results
+             (tenant_id, student_id, enrolment_id, class_id, session_id, term_id,
+              class_subject_id, subject_id, assessment_type, score, max_score,
+              assessed_on, recorded_by)
+           SELECT $1, $2, $3, $4, $5, $6, cs.id, cs.subject_id, $8, $9, $10, $11, $12
+             FROM class_subjects cs WHERE cs.id = $7`,
+          [
+            school,
+            enrolment.studentId,
+            enrolment.enrolmentId,
+            classId,
+            sessionId,
+            termId,
+            classSubjectIds[subject.key],
+            assessment.type,
+            scores[subjectIndex][assessmentIndex],
+            assessment.maxScore,
+            assessment.assessedOn,
+            adminMembershipId,
+          ],
+        );
+      }
+    }
   }
 
   return { adminMembershipId, sessionId, termId, classId, classSubjectIds, enrolments };
