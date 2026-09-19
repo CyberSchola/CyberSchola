@@ -60,21 +60,26 @@ describe('AI chat security boundary', () => {
     ).toBe(Permission.AiChat);
   });
 
-  it.each(Object.values(Role))('allows supported role %s to reach AiService', async (role) => {
-    await expect(invoke({ tenantId: 'tenant-1', userId: 'user-1', role })).resolves.toEqual({
-      message: 'ok',
-    });
+  it.each(Object.values(Role))(
+    'allows supported role %s to reach AiService',
+    async (role) => {
+      await expect(
+        invoke({ tenantId: 'tenant-1', userId: 'user-1', role }),
+      ).resolves.toEqual({
+        message: 'ok',
+      });
 
-    expect(chat).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tenantId: 'tenant-1',
-        userId: 'user-1',
-        role,
-        requestId: 'request-1',
-      }),
-      'hello',
-    );
-  });
+      expect(chat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          userId: 'user-1',
+          role,
+          requestId: 'request-1',
+        }),
+        'hello',
+      );
+    },
+  );
 
   it('rejects an unknown role before AiService is reached', async () => {
     await expect(
@@ -84,19 +89,23 @@ describe('AI chat security boundary', () => {
   });
 
   it('rejects a request with no resolved roles before AiService is reached', async () => {
-    await expect(invoke({ tenantId: 'tenant-1', userId: 'user-1' })).rejects.toBeInstanceOf(
-      UnauthenticatedException,
-    );
+    await expect(
+      invoke({ tenantId: 'tenant-1', userId: 'user-1' }),
+    ).rejects.toBeInstanceOf(UnauthenticatedException);
     expect(chat).not.toHaveBeenCalled();
   });
 
   it('rejects a request with no tenant before AiService is reached', async () => {
-    await expect(invoke({ userId: 'user-1', role: Role.Teacher })).rejects.toThrow();
+    await expect(
+      invoke({ userId: 'user-1', role: Role.Teacher }),
+    ).rejects.toThrow();
     expect(chat).not.toHaveBeenCalled();
   });
 
   it('rejects a request with no user before AiService is reached', async () => {
-    await expect(invoke({ tenantId: 'tenant-1', role: Role.Teacher })).rejects.toThrow();
+    await expect(
+      invoke({ tenantId: 'tenant-1', role: Role.Teacher }),
+    ).rejects.toThrow();
     expect(chat).not.toHaveBeenCalled();
   });
 });
