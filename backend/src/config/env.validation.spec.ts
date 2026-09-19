@@ -19,6 +19,7 @@ const VALID = {
   REDIS_URL: 'redis://localhost:6379',
   SUPABASE_URL: 'https://project.supabase.co',
   SUPABASE_JWKS_URL: 'https://project.supabase.co/auth/v1/.well-known/jwks.json',
+  GROQ_API_KEY: 'gsk_test_key',
 } as const;
 
 const withEnv = (overrides: Record<string, unknown> = {}) => ({ ...VALID, ...overrides });
@@ -287,6 +288,7 @@ describe('validateEnv', () => {
     });
   });
 
+
   describe('who production trusts to issue tokens', () => {
     const DEMO_ISSUER = {
       SUPABASE_URL: 'https://api-cyberschola.example.com/demo-auth',
@@ -302,6 +304,21 @@ describe('validateEnv', () => {
         /In production, SUPABASE_URL must be a Supabase project URL/,
       );
     });
+      describe('GROQ_API_KEY', () => {
+    it('rejects a missing key', () => {
+      const incomplete = withEnv();
+      delete (incomplete as Record<string, unknown>).GROQ_API_KEY;
+      expect(() => validateEnv(incomplete)).toThrow(/GROQ_API_KEY/);
+    });
+
+    it('rejects a whitespace-only value', () => {
+      expect(() => validateEnv(withEnv({ GROQ_API_KEY: '   ' }))).toThrow(/GROQ_API_KEY/);
+    });
+
+    it('accepts a real value', () => {
+      expect(validateEnv(withEnv({ GROQ_API_KEY: 'gsk_test' })).GROQ_API_KEY).toBe('gsk_test');
+    });
+  });
 
     it('checks the keys as well as the issuer, so they cannot be split', () => {
       expect(() =>

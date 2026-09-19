@@ -8,14 +8,16 @@ const WINDOW_SECONDS = 600;
 const MAX_REQUESTS_PER_WINDOW = 20;
 
 /**
- * INCR and, on the first hit only, EXPIRE — run as one Lua script so Redis
- * executes both as a single uninterruptible step. This closes the gap in a
- * plain INCR-then-EXPIRE, where a crash between the two leaves a counter with
- * no TTL, permanently locking the key out.
+ * INCR, then EXPIRE whenever the key currently has no TTL — not only on the
+ * first hit. Checking PTTL rather than trusting count === 1 means a key that
+ * somehow lost its expiry (PERSIST, an operational mistake) self-heals on the
+ * very next request instead of staying permanently unexpiring. Still one
+ * atomic script: Redis runs it as a single uninterruptible step.
  */
 const INCR_WITH_TTL_SCRIPT = `
 local count = redis.call('INCR', KEYS[1])
-if count == 1 then
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 then
   redis.call('EXPIRE', KEYS[1], ARGV[1])
 end
 return count

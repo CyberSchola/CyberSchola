@@ -44,6 +44,16 @@ export class EnvironmentVariables {
   API_PREFIX!: string;
 
   /**
+   * Server-side key for the Groq AI provider.
+   *
+   * \S rather than .+ : a whitespace-only value would pass a bare presence
+   * check and fail confusingly inside the Groq SDK instead of at boot.
+   */
+  @IsString()
+  @Matches(/\S/, { message: 'GROQ_API_KEY must not be empty or whitespace-only' })
+  GROQ_API_KEY!: string;
+
+  /**
    * Transaction-mode pooler, used by the application.
    *
    * Validated as a postgres URL rather than merely present. A blank or
@@ -242,6 +252,7 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
       SUPABASE_URL: config.SUPABASE_URL,
       SUPABASE_JWKS_URL: config.SUPABASE_JWKS_URL,
       CORS_ORIGINS: optional(config.CORS_ORIGINS),
+      GROQ_API_KEY: config.GROQ_API_KEY,
     },
     { enableImplicitConversion: true },
   );
