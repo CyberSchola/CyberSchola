@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { DeepPartial, EntityManager } from 'typeorm';
 
 import {
+  ResourceConflictException,
   ResourceNotFoundException,
   ValidationFailedException,
 } from '../common/exceptions/app.exception';
@@ -26,6 +27,7 @@ import type {
   CreateTermDto,
   ElectiveRegistrationDto,
   GradeLevelDto,
+  ReassignClassSubjectDto,
   SubjectDto,
   TermDto,
 } from './academics.dto';
@@ -39,6 +41,7 @@ import { SchoolClass } from './entities/school-class.entity';
 import { Subject } from './entities/subject.entity';
 import { Term } from './entities/term.entity';
 import { RecordAction } from '../common/actions/record.action';
+import { reassignmentClash } from '../timetable/timetable-clashes';
 
 /**
  * The academic spine: structure and assignments.
@@ -138,6 +141,42 @@ export class AcademicsService {
       { ...input, isElective: input.isElective ?? false },
       toClassSubjectDto,
     );
+  }
+
+  /**
+   * Hands a class subject to another teacher, and its timetabled lessons with it.
+   *
+   * The lessons follow through the foreign key's ON UPDATE CASCADE, in this one
+   * statement, so there is no moment where the subject and its lessons disagree
+   * about who teaches them. If the new teacher already teaches in one of those
+   * periods, the timetable's teacher index refuses the whole update and nothing
+   * changes. The pre-check only puts that refusal into words; a race past it
+   * still meets the index, as a plain 409.
+   *
+   * A teacher from another school is a 404, from the foreign key to `teachers`.
+   */
+  reassignClassSubject(id: string, input: ReassignClassSubjectDto): Promise<ClassSubjectDto> {
+    return this.inSchool(async (manager) => {
+      const assignment = await manager.findOne(ClassSubject, { where: { id } });
+
+      if (!assignment) {
+        throw new ResourceNotFoundException();
+      }
+
+      if (assignment.teacherId === input.teacherId) {
+        return toClassSubjectDto(assignment);
+      }
+
+      const clash = await reassignmentClash(manager, requireTenantId(), id, input.teacherId);
+
+      if (clash !== null) {
+        throw new ResourceConflictException(clash);
+      }
+
+      await manager.update(ClassSubject, { id }, { teacherId: input.teacherId });
+
+      return toClassSubjectDto({ ...assignment, teacherId: input.teacherId });
+    });
   }
 
   /**

@@ -1,4 +1,4 @@
-import { Body, Controller, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, HttpStatus, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Permission } from '../auth/permission.matrix';
@@ -13,6 +13,7 @@ import {
   CreateClassSupervisorDto,
   CreateElectiveRegistrationDto,
   ElectiveRegistrationDto,
+  ReassignClassSubjectDto,
 } from './academics.dto';
 import { AcademicsService } from './academics.service';
 
@@ -55,6 +56,32 @@ export class AssignmentsController {
   @ApiErrorResponse(HttpStatus.CONFLICT, 'The subject is already taught in this class.')
   createClassSubject(@Body() input: CreateClassSubjectDto): Promise<ClassSubjectDto> {
     return this.academics.createClassSubject(input);
+  }
+
+  @Patch('class-subjects/:id')
+  @RequiresPermission(Permission.AcademicManage)
+  @ApiOperation({
+    summary: 'Hand a subject in a class to another teacher',
+    description:
+      'Every timetabled lesson of the subject moves to the new teacher in the same change. ' +
+      'Refused (409, naming the lesson in the way) if the new teacher already teaches in any ' +
+      'of those periods, and then nothing changes.',
+  })
+  @ApiItemResponse(ClassSubjectDto, 'Subject reassigned.')
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The body failed validation.')
+  @ApiErrorResponse(
+    HttpStatus.NOT_FOUND,
+    'The class subject or teacher does not exist in this school.',
+  )
+  @ApiErrorResponse(
+    HttpStatus.CONFLICT,
+    'The new teacher already teaches in a period this subject is timetabled in.',
+  )
+  reassignClassSubject(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() input: ReassignClassSubjectDto,
+  ): Promise<ClassSubjectDto> {
+    return this.academics.reassignClassSubject(id, input);
   }
 
   @Post('class-enrolments')
