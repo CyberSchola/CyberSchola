@@ -40,6 +40,7 @@ describe('the permission matrix', () => {
       // section 95. A teacher who takes the wrong register asks for it to be
       // changed, and section 96's trail records who actually changed it.
       Permission.AttendanceCorrect,
+      Permission.ResultEnter,
     ],
     [Role.Teacher]: [
       Permission.MembershipRead,
@@ -51,6 +52,9 @@ describe('the permission matrix', () => {
       // Holding this is not the whole rule: which class they may mark is decided
       // per request, from the classes they supervise this session.
       Permission.AttendanceMark,
+      // Again not the whole rule: which class subject's scores they may enter is
+      // decided per request, from the subjects they teach this session.
+      Permission.ResultEnter,
     ],
     [Role.Student]: [
       Permission.MembershipRead,
