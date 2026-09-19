@@ -135,7 +135,6 @@ const COMING_SOON = {
   pta: { label: 'PTA', icon: 'users', text: 'Parent–teacher association meetings, levies and communication.' },
   'live-classes': { label: 'Live Classes', icon: 'video', text: 'Live lessons for teachers and pupils, with attendance and recordings.' },
   'waec-jamb': { label: 'WAEC/JAMB Tutor', icon: 'target', text: 'Exam preparation with past questions, mock tests and an AI tutor.' },
-  'student-copilot': { label: 'Student Copilot', icon: 'spark', text: 'A personal AI study companion that explains topics the way each pupil learns best.' },
 };
 
 function navItems() {
@@ -165,6 +164,7 @@ function navItems() {
   } else {
     groups.push({ title: 'Overview', items: [{ href: '#/dashboard', label: 'Dashboard', icon: 'home' }] });
     groups.push({ title: 'Learning', items: [{ href: '#/results', label: 'My Results', icon: 'chart' }] });
+    groups.push({ title: 'Intelligence', items: [{ href: '#/copilot/student', label: 'Student Copilot', icon: 'spark' }] });
   }
 
   groups.push(lockedGroup);
@@ -174,7 +174,7 @@ function navItems() {
 function shell(title, body) {
   const person = session.person ?? {};
   const route = location.hash || '#/dashboard';
-  const copilotHref = isAdmin() ? '#/copilot/admin' : isTeacher() ? '#/copilot/teacher' : '#/soon/student-copilot';
+  const copilotHref = isAdmin() ? '#/copilot/admin' : isTeacher() ? '#/copilot/teacher' : '#/copilot/student';
   const roleLabel = isAdmin() ? 'Administrator' : isTeacher() ? 'Teacher' : isStudent() ? 'Student' : 'Member';
 
   app.innerHTML = `
@@ -591,25 +591,97 @@ async function addAndEnrol(body) {
 // ---------------------------------------------------------------- teachers
 
 async function renderTeachers() {
+  const admin = isAdmin();
   shell('Teachers', `
-    <div class="page-head"><div><h1>Teachers</h1><p>Teaching staff and what they teach.</p></div></div>
+    <div class="page-head"><div><h1>Teachers</h1><p>Teaching staff and what they teach.</p></div>
+      ${admin ? `<button class="btn primary" id="add">${icon('plus')} Add teacher</button>` : ''}</div>
     <div class="card"><div class="table-wrap" id="table"><div class="card-pad"><div class="skeleton" style="height:200px"></div></div></div></div>`);
+  if (admin) document.getElementById('add').onclick = () => teacherModal();
   try {
     const [list, assignments] = await Promise.all([api('/teachers?limit=100'), api('/ai/teacher/assignments')]);
     const subjects = new Map();
     for (const a of assignments) subjects.set(a.teacher, [...(subjects.get(a.teacher) ?? []), `${a.subject} · ${a.class}`]);
-    document.getElementById('table').innerHTML = `
-      <table><thead><tr><th>Teacher</th><th>Teaches</th><th>Sign-in</th></tr></thead>
-      <tbody>${list.items.map((t) => {
+    const rows = list.items;
+    document.getElementById('table').innerHTML = rows.length ? `
+      <table><thead><tr><th>Teacher</th><th>Teaches</th><th>Sign-in</th>${admin ? '<th></th>' : ''}</tr></thead>
+      <tbody>${rows.map((t) => {
         const name = `${t.firstName} ${t.lastName}`;
+        const teaches = subjects.get(name) ?? [];
+        // A teacher who signs in or teaches a class is in use: removing them
+        // would orphan their classes, so the demo only removes unused records.
+        const inUse = Boolean(t.membershipId) || teaches.length > 0;
         return `<tr><td><div class="name-cell"><div class="avatar">${esc(initials(name))}</div><strong>${esc(name)}</strong></div></td>
-          <td>${(subjects.get(name) ?? []).map((s) => `<span class="chip">${esc(s)}</span>`).join(' ') || '<span class="muted">–</span>'}</td>
-          <td>${t.membershipId ? '<span class="badge good">Has account</span>' : '<span class="badge">No account</span>'}</td></tr>`;
-      }).join('')}</tbody></table>`;
+          <td>${teaches.map((x) => `<span class="chip">${esc(x)}</span>`).join(' ') || '<span class="muted">Not assigned yet</span>'}</td>
+          <td>${t.membershipId ? '<span class="badge good">Has account</span>' : '<span class="badge">No account</span>'}</td>
+          ${admin ? `<td class="num"><button class="btn sm" data-edit="${esc(t.id)}">Edit</button> <button class="btn sm danger" data-del="${esc(t.id)}"${inUse ? ' disabled title="Teaches a class or signs in, so it stays"' : ''}>Delete</button></td>` : ''}</tr>`;
+      }).join('')}</tbody></table>` : '<div class="empty"><strong>No teachers yet</strong><p>Add the first teacher to get started.</p></div>';
+    document.querySelectorAll('[data-edit]').forEach((el) => (el.onclick = () => teacherModal(rows.find((t) => t.id === el.dataset.edit))));
+    document.querySelectorAll('[data-del]').forEach((el) => (el.onclick = async () => {
+      const teacher = rows.find((t) => t.id === el.dataset.del);
+      if (!confirm(`Remove ${teacher.firstName} ${teacher.lastName}? Their history is kept.`)) return;
+      try {
+        await api(`/teachers/${teacher.id}`, { method: 'DELETE' });
+        toast('Teacher removed.');
+        renderTeachers();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    }));
   } catch (error) {
     document.getElementById('table').innerHTML = errorBox(error, true);
     bindRetry(renderTeachers);
   }
+}
+
+function teacherModal(teacher) {
+  const editing = Boolean(teacher);
+  const back = document.createElement('div');
+  back.className = 'modal-back';
+  back.innerHTML = `
+    <form class="modal" novalidate>
+      <div class="card-head"><h3>${editing ? 'Edit teacher' : 'Add teacher'}</h3><button type="button" class="link-btn" data-close>Close</button></div>
+      <div class="body">
+        <div class="row">
+          <div class="field"><label for="tfn">First name</label><input id="tfn" name="firstName" required maxlength="120" value="${esc(teacher?.firstName ?? '')}"></div>
+          <div class="field"><label for="tln">Last name</label><input id="tln" name="lastName" required maxlength="120" value="${esc(teacher?.lastName ?? '')}"></div>
+        </div>
+        ${editing ? '' : '<p class="muted small" style="margin:0">Classes and subjects are assigned to a teacher separately.</p>'}
+        <p class="error-box small hidden" id="form-error" style="padding:8px 0 0;text-align:left"></p>
+      </div>
+      <div class="foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">${editing ? 'Save changes' : 'Add teacher'}</button></div>
+    </form>`;
+  document.body.appendChild(back);
+  back.querySelectorAll('[data-close]').forEach((el) => (el.onclick = () => back.remove()));
+  back.querySelector('#tfn').focus();
+
+  back.querySelector('form').onsubmit = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const body = { firstName: String(form.get('firstName')).trim(), lastName: String(form.get('lastName')).trim() };
+    const errorEl = back.querySelector('#form-error');
+    if (!body.firstName || !body.lastName) {
+      errorEl.textContent = 'First and last name are required.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    const submit = event.target.querySelector('[type=submit]');
+    submit.disabled = true;
+    try {
+      if (editing) {
+        await api(`/teachers/${teacher.id}`, { method: 'PATCH', body });
+        toast('Changes saved.');
+      } else {
+        await api('/teachers', { method: 'POST', body });
+        toast(`${body.firstName} ${body.lastName} added.`);
+      }
+      back.remove();
+      renderTeachers();
+    } catch (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+      submit.disabled = false;
+    }
+  };
 }
 
 // ---------------------------------------------------------------- results + attendance
@@ -946,6 +1018,102 @@ function lessonPlan(plan) {
     <div class="meta-line"><span>Generated ${esc(new Date(plan.meta.generatedAt).toLocaleString())}</span><span>Model ${esc(plan.meta.model)}</span><button class="link-btn" onclick="window.print()">Print</button></div>`;
 }
 
+// ---------------------------------------------------------------- student copilot
+
+const STUDY_GOALS = [
+  { key: 'explain', label: 'Explain it' },
+  { key: 'practice', label: 'Practice questions' },
+  { key: 'plan', label: 'Revision plan' },
+];
+
+/**
+ * The pupil's study partner. Subjects come from the pupil's own results, the
+ * weakest first, so help starts where it is needed; the API personalises the
+ * answer from the same scores and gives the model nothing about anyone else.
+ */
+async function renderStudentCopilot() {
+  shell('Student Copilot', `
+    <div class="page-head"><div class="copilot-hero"><div class="spark">${icon('spark', 22)}</div><div><h1>Student Copilot</h1><p>Your study partner. It knows your own scores, and only yours.</p></div></div></div>
+    <div class="grid split" style="align-items:start">
+      <div class="card" id="output"><div class="empty">${icon('book', 28)}<p><strong>What do you want to learn today?</strong></p><p>Pick a subject and a topic. The Copilot explains it, gives you questions to practise with answers to check, or plans your revision around where you lose marks.</p></div></div>
+      <form class="card card-pad" id="ask">
+        <div id="focus" class="focus-line muted small">Loading your subjects…</div>
+        <div class="field"><label for="subj">Subject</label><select id="subj" required><option>Loading…</option></select></div>
+        <div class="field"><label for="topic">Topic</label><input id="topic" required maxlength="200" value="Quadratic equations"></div>
+        <div class="field"><label>I want</label><div class="seg" role="tablist">${STUDY_GOALS.map((g, i) =>
+          `<button type="button" role="tab" class="seg-btn${i === 0 ? ' on' : ''}" data-goal="${g.key}" aria-selected="${i === 0}">${g.label}</button>`).join('')}</div></div>
+        <div class="field"><label for="q">Anything specific? <span class="muted">(optional)</span></label><textarea id="q" rows="3" maxlength="500" placeholder="For example: I keep getting the sign wrong when I factorise."></textarea></div>
+        <button class="btn primary" type="submit" style="width:100%;justify-content:center">${icon('spark')} Help me study</button>
+      </form>
+    </div>`);
+
+  let goal = 'explain';
+  document.querySelectorAll('[data-goal]').forEach((button) => {
+    button.onclick = () => {
+      goal = button.dataset.goal;
+      document.querySelectorAll('[data-goal]').forEach((b) => { b.classList.toggle('on', b === button); b.setAttribute('aria-selected', String(b === button)); });
+    };
+  });
+
+  const select = document.getElementById('subj');
+  const focus = document.getElementById('focus');
+  try {
+    const performance = await api('/results/performance');
+    const mine = [...(performance.students[0]?.subjects ?? [])].sort((a, b) => a.total - b.total);
+    if (!mine.length) {
+      select.innerHTML = '<option value="">No results yet</option>';
+      focus.textContent = 'Your results are not recorded yet, so there is nothing to personalise.';
+    } else {
+      select.innerHTML = mine.map((s) => `<option value="${esc(s.subjectId)}">${esc(s.subject)} · ${esc(s.total)}/100</option>`).join('');
+      focus.innerHTML = `Focus first on <b>${esc(mine[0].subject)}</b>: your lowest total this term, ${esc(mine[0].total)}/100.`;
+    }
+  } catch (error) {
+    select.innerHTML = '<option value="">Could not load your subjects</option>';
+    focus.textContent = error.message;
+  }
+
+  document.getElementById('ask').onsubmit = async (event) => {
+    event.preventDefault();
+    const output = document.getElementById('output');
+    const button = event.target.querySelector('[type=submit]');
+    const subject = select.options[select.selectedIndex]?.text.split(' · ')[0] ?? 'your subject';
+    button.disabled = true;
+    output.innerHTML = thinking([`Reading your ${subject} scores`, 'Finding where you lose marks', 'Preparing your study help']);
+    const done = { value: false };
+    const steps = runSteps(done);
+    try {
+      const help = await api('/ai/student/study-help', {
+        method: 'POST',
+        body: { subjectId: select.value, topic: document.getElementById('topic').value.trim(), goal, question: document.getElementById('q').value.trim() || undefined },
+      });
+      done.value = true;
+      await Promise.race([steps, sleep(50)]);
+      output.innerHTML = studyHelp(help);
+    } catch (error) {
+      done.value = true;
+      output.innerHTML = errorBox(error, true);
+      bindRetry(() => event.target.requestSubmit());
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+function studyHelp(help) {
+  return `
+    <div class="result-section"><h4>${icon('book', 16)} ${esc(help.meta.subject)} · your total ${esc(help.meta.total ?? '–')}/100</h4><h2 style="font-size:22px;margin-bottom:8px">${esc(help.title)}</h2><p style="margin:0">${esc(help.summary)}</p></div>
+    <div class="result-section"><h4>${icon('bulb', 16)} Explanation</h4>${help.explanation.map((s) => `<h5 class="study-h">${esc(s.heading)}</h5><p class="study-p">${esc(s.body)}</p>`).join('')}</div>
+    <div class="result-section"><h4>${icon('lesson', 16)} Worked example</h4><p class="study-p"><b>${esc(help.workedExample.problem)}</b></p><ol class="study-steps">${help.workedExample.steps.map((st) => `<li>${esc(st)}</li>`).join('')}</ol><p class="study-p"><b>Answer:</b> ${esc(help.workedExample.answer)}</p></div>
+    <div class="result-section"><h4>${icon('target', 16)} Practise · ${help.practice.length} questions</h4>${help.practice.map((p, i) => `
+      <div class="practice"><p class="study-p"><b>${i + 1}.</b> ${esc(p.question)}</p>
+        <details><summary>Hint</summary><p class="study-p">${esc(p.hint)}</p></details>
+        <details><summary>Answer</summary><p class="study-p">${esc(p.answer)}</p></details></div>`).join('')}</div>
+    <div class="result-section"><h4>${icon('calendar', 16)} Your plan</h4>${help.studyPlan.map((d) => `<div class="stage"><div class="mins">${esc(d.day)}</div><div class="small">${esc(d.task)}</div></div>`).join('')}</div>
+    <div class="result-section"><h4>${icon('check', 16)} Tips</h4><ul>${help.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></div>
+    <div class="result-section"><div class="insight"><div class="tag">${icon('spark', 14)} Keep going</div><p style="margin-bottom:0">${esc(help.encouragement)}</p></div></div>
+    <div class="meta-line"><span>${esc(help.meta.term)}</span><span>Generated ${esc(new Date(help.meta.generatedAt).toLocaleString())}</span><span>Model ${esc(help.meta.model)}</span></div>`;
+}
+
 // ---------------------------------------------------------------- coming soon
 
 function renderSoon(key) {
@@ -987,7 +1155,7 @@ async function route() {
     results: renderResults,
     attendance: renderAttendance,
     scores: renderScores,
-    copilot: () => (sub === 'teacher' ? renderTeacherCopilot() : renderAdminCopilot()),
+    copilot: () => (sub === 'teacher' ? renderTeacherCopilot() : sub === 'student' ? renderStudentCopilot() : renderAdminCopilot()),
     soon: () => renderSoon(sub),
   };
 

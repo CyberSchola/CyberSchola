@@ -88,6 +88,8 @@ h1, h2, h3, h4 { margin: 0; line-height: 1.25; }
 
 /* ------------------------------------------------------------------ parts */
 .grid { display: grid; gap: 18px; }
+/* Grid items may shrink below their content, so a long formula or word wraps instead of widening the page. */
+.grid > * { min-width: 0; }
 .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -155,6 +157,16 @@ tr:last-child td { border-bottom: 0; }
 .score-foot .btn { white-space: nowrap; flex: none; }
 .warn-text { color: var(--bad); font-weight: 600; }
 
+/* ------------------------------------------------------------------ student copilot */
+.focus-line { background: var(--brand-softer); border: 1px solid var(--brand-soft); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; color: var(--text); }
+.study-h { font-size: 15px; margin: 12px 0 4px; }
+.study-p { margin: 4px 0; overflow-wrap: anywhere; }
+.study-steps li, .practice, .result-section { overflow-wrap: anywhere; }
+.study-steps { margin: 6px 0; padding-left: 20px; }
+.practice { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; }
+.practice details { margin-top: 6px; }
+.practice summary { cursor: pointer; color: var(--brand); font-weight: 600; font-size: 13px; }
+
 /* ------------------------------------------------------------------ forms */
 .field { display: grid; gap: 6px; margin-bottom: 14px; }
 .field label { font-size: 13px; font-weight: 600; }
@@ -221,6 +233,8 @@ tr:last-child td { border-bottom: 0; }
   .grid.cols-2, .row { grid-template-columns: 1fr; }
   .bar-row { grid-template-columns: 110px 1fr 44px; }
   .score-toolbar { grid-template-columns: 1fr; }
+  .seg { display: flex; width: 100%; }
+  .seg-btn { flex: 1; white-space: normal; padding: 8px 6px; line-height: 1.25; }
   .score-input { width: 72px; }
   .score-table .other-col { display: none; }
   .toast { left: 16px; right: 16px; top: 76px; text-align: center; }
