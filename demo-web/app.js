@@ -421,14 +421,14 @@ async function renderStudents() {
 
   try {
     const [list, performance] = await Promise.all([api('/students?limit=100'), api('/results/performance').catch(() => null)]);
-    const byId = new Map((performance?.students ?? []).map((s) => [s.studentId, s]));
+    const resultsById = new Map((performance?.students ?? []).map((s) => [s.studentId, s]));
     const rows = list.items;
 
     byId('table').innerHTML = rows.length ? `
       <table>
         <thead><tr><th>Student</th><th>Class</th><th class="num">Average</th>${admin ? '<th class="num">Attendance</th><th></th>' : ''}</tr></thead>
         <tbody>${rows.map((student) => {
-          const perf = byId.get(student.id);
+          const perf = resultsById.get(student.id);
           const name = `${student.firstName} ${student.lastName}`;
           return `<tr>
             <td><div class="name-cell"><div class="avatar">${esc(initials(name))}</div><div><strong>${esc(name)}</strong>${student.admissionNumber ? `<div class="muted small">${esc(student.admissionNumber)}</div>` : ''}</div></div></td>
