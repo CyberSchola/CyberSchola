@@ -1,4 +1,3 @@
-
 /**
  * Roles a person can hold in a school.
  *

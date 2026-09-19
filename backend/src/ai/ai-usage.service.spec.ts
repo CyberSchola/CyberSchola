@@ -16,7 +16,13 @@ class FakeRedis {
   }
 
   /** Mirrors the exact script AiUsageService sends: INCR, check PTTL, EXPIRE if unset. */
-  eval(_script: string, _numKeys: number, key: string, windowSeconds: string | number): Promise<number> {    const existing = this.store.get(key);
+  eval(
+    _script: string,
+    _numKeys: number,
+    key: string,
+    windowSeconds: string | number,
+  ): Promise<number> {
+    const existing = this.store.get(key);
     const expired = existing && existing.expiresAtMs !== null && existing.expiresAtMs <= this.nowMs;
 
     const entry = !existing || expired ? { count: 0, expiresAtMs: null } : existing;
@@ -65,7 +71,9 @@ describe('AiUsageService', () => {
 
     for (let i = 0; i < 20; i++) await service.checkAndRecord('t1', 'u1');
 
-    await expect(service.checkAndRecord('t1', 'u1')).rejects.toBeInstanceOf(AiQuotaExceededException);
+    await expect(service.checkAndRecord('t1', 'u1')).rejects.toBeInstanceOf(
+      AiQuotaExceededException,
+    );
   });
 
   it('starts a fresh window once the previous one has expired', async () => {

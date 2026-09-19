@@ -3,7 +3,12 @@ import { type AiUsageService } from './ai-usage.service';
 import { AiQuotaExceededException } from '../common/exceptions/app.exception';
 import type { AiProvider, AiRequestContext } from './ai-provider.interface';
 
-const CONTEXT: AiRequestContext = { tenantId: 't1', userId: 'u1', role: 'TEACHER', requestId: 'r1' };
+const CONTEXT: AiRequestContext = {
+  tenantId: 't1',
+  userId: 'u1',
+  role: 'TEACHER',
+  requestId: 'r1',
+};
 
 describe('AiService (gateway boundary)', () => {
   it('checks quota before calling the provider', async () => {
@@ -40,7 +45,9 @@ describe('AiService (gateway boundary)', () => {
   });
 
   it('passes the trusted context to the provider, not client input', async () => {
-    const usage = { checkAndRecord: jest.fn().mockResolvedValue(undefined) } as unknown as AiUsageService;
+    const usage = {
+      checkAndRecord: jest.fn().mockResolvedValue(undefined),
+    } as unknown as AiUsageService;
     const generate = jest.fn().mockResolvedValue({ message: 'ok' });
     const provider: AiProvider = { generate };
 

@@ -23,8 +23,11 @@ describe('AiChatRequestDto', () => {
     expect(await errorsFor({ message: 'a'.repeat(4001) })).not.toHaveLength(0);
   });
 
-  it.each(['tenantId', 'userId', 'role', 'copilot'])('rejects an unexpected %s field', async (field) => {
-    const errors = await errorsFor({ message: 'hi', [field]: 'anything' });
-    expect(errors.some((e) => e.property === field)).toBe(true);
-  });
+  it.each(['tenantId', 'userId', 'role', 'copilot'])(
+    'rejects an unexpected %s field',
+    async (field) => {
+      const errors = await errorsFor({ message: 'hi', [field]: 'anything' });
+      expect(errors.some((e) => e.property === field)).toBe(true);
+    },
+  );
 });

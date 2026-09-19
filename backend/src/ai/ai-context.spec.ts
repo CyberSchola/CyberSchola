@@ -13,7 +13,13 @@ describe('resolveAiRequestContext', () => {
 
   it('reads the first role when a caller holds several', () => {
     const result = runWithRequestContext(
-      { origin: 'http', tenantId: 't1', userId: 'u1', roles: ['TEACHER', 'PARENT'], requestId: 'r1' },
+      {
+        origin: 'http',
+        tenantId: 't1',
+        userId: 'u1',
+        roles: ['TEACHER', 'PARENT'],
+        requestId: 'r1',
+      },
       () => resolveAiRequestContext(),
     );
 

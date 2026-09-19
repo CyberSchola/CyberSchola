@@ -5,7 +5,12 @@ import { AiProviderException } from './ai-provider.exception';
 import type { AiRequestContext } from './ai-provider.interface';
 import { GroqProvider } from './groq.provider';
 
-const CONTEXT: AiRequestContext = { tenantId: 't1', userId: 'u1', role: 'TEACHER', requestId: 'r1' };
+const CONTEXT: AiRequestContext = {
+  tenantId: 't1',
+  userId: 'u1',
+  role: 'TEACHER',
+  requestId: 'r1',
+};
 
 function makeClient(create: jest.Mock): Groq {
   return { chat: { completions: { create } } } as unknown as Groq;
@@ -31,7 +36,9 @@ describe('GroqProvider', () => {
     const create = jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:443'));
     const provider = new GroqProvider(makeClient(create));
 
-    const error = await provider.generate({ message: 'hi', context: CONTEXT }).catch((e: unknown) => e);
+    const error = await provider
+      .generate({ message: 'hi', context: CONTEXT })
+      .catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(AiProviderException);
     expect((error as AiProviderException).message).not.toContain('ECONNREFUSED');
