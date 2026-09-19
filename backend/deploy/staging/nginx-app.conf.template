@@ -1,0 +1,53 @@
+# Nginx site for the demo frontend (demo-web/), served beside the API.
+# Installed as it runs on the staging server; Certbot added the TLS lines.
+# /api and /demo-auth are proxied to the local API and demo sign-in, so the
+# browser calls one origin and no CORS configuration is needed.
+server {
+    server_name __APP_DOMAIN__;
+    server_tokens off;
+    client_max_body_size 1m;
+    root /var/www/cyberschola-app;
+    index index.html;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    add_header X-Frame-Options DENY always;
+
+    location / { try_files $uri $uri/ /index.html; add_header Cache-Control "no-cache"; }
+
+    location /api/ {
+        limit_req zone=cyberschola_api burst=40 nodelay;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 90s;
+    }
+
+    location /demo-auth/ {
+        limit_req zone=cyberschola_demo_auth burst=20 nodelay;
+        proxy_pass http://127.0.0.1:3100;
+        proxy_set_header Host $host;
+    }
+
+    listen [::]:443 ssl; # managed by Certbot
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/__APP_DOMAIN__/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/__APP_DOMAIN__/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+
+}
+server {
+    if ($host = __APP_DOMAIN__) {
+        return 301 https://$host$request_uri;
+    } # managed by Certbot
+
+
+    listen 80;
+    listen [::]:80;
+    server_name __APP_DOMAIN__;
+    return 404; # managed by Certbot
+
+
+}
