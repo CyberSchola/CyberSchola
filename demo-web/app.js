@@ -6,8 +6,23 @@
 // for the signed-in person. Hiding a menu item here is presentation only: the
 // API enforces every permission and scope regardless.
 
+import { renderLanding, renderSignIn } from './landing.js';
+
 const API = '/api/v1';
 const app = document.getElementById('app');
+
+/**
+ * An element of the current page, or a detached one when it has gone. Pages
+ * load their data after rendering, and a person may move on before it arrives;
+ * the late write then lands nowhere instead of throwing.
+ */
+const byId = (id) => document.getElementById(id) ?? document.createElement('div');
+
+/** Enables a Copilot's button once its list holds a real choice, so an early click cannot send a placeholder. */
+function readyWhenChosen(select) {
+  const button = select.closest('form')?.querySelector('[type=submit]');
+  if (button) button.disabled = !select.value;
+}
 
 // ---------------------------------------------------------------- utilities
 
@@ -216,12 +231,12 @@ function shell(title, body) {
     </div>
   </div>`;
 
-  document.getElementById('signout').onclick = signOut;
-  document.getElementById('menu').onclick = () => document.getElementById('shell').classList.toggle('nav-open');
+  byId('signout').onclick = signOut;
+  byId('menu').onclick = () => byId('shell').classList.toggle('nav-open');
   document.querySelectorAll('[data-go]').forEach((el) => (el.onclick = () => (location.hash = el.dataset.go)));
 }
 
-const content = () => document.getElementById('content');
+const content = () => byId('content');
 
 function errorBox(error, retry) {
   const message = error instanceof ApiError && error.status >= 500
@@ -245,52 +260,15 @@ const tone = (value, low = 50, mid = 60) => (value == null ? '' : value < low ? 
 // ---------------------------------------------------------------- screens
 
 function renderLogin() {
-  app.innerHTML = `
-  <div class="login">
-    <section class="login-hero">
-      <div class="brand" style="padding:0">
-        <div class="brand-mark" style="background:rgba(255,255,255,.16)">${icon('spark', 20)}</div>
-        <div><div class="brand-name" style="color:#fff">CyberSchola</div><div class="brand-sub" style="color:#d9cdfa">SCHOOL INTELLIGENCE</div></div>
-      </div>
-      <div>
-        <h1>The school management platform with an AI Copilot for every role.</h1>
-        <p>Real school records, secured per school and per role, with Copilots that turn them into decisions.</p>
-        <div class="hero-points">
-          <div class="hero-point">${icon('lock', 20)}<div><strong>Secure by design</strong><span>Every school's data is isolated in the database, and every role sees only what it should.</span></div></div>
-          <div class="hero-point">${icon('spark', 20)}<div><strong>AI on your real data</strong><span>The Admin Copilot analyses actual results and attendance; the Teacher Copilot plans lessons.</span></div></div>
-        </div>
-      </div>
-      <div class="small" style="color:#cbbdf6">CyberSchola Demo College · 2025/2026 · Second Term</div>
-    </section>
-    <section class="login-panel">
-      <div class="login-card">
-        <h2>Sign in</h2>
-        <p class="muted">Choose a demo account for CyberSchola Demo College.</p>
-        <div class="account-list">
-          ${ACCOUNTS.map((account, index) => `
-            <button class="account" data-account="${index}">
-              <div class="avatar">${esc(initials(account.name))}</div>
-              <div class="who"><strong>${esc(account.name)}</strong><span class="muted small">${esc(account.title)}</span></div>
-              <span class="role">${esc(account.role)}</span>
-            </button>`).join('')}
-        </div>
-        <p class="muted small">Each account signs in with a real, time-limited token. What you see is exactly what the platform authorizes for that person.</p>
-      </div>
-    </section>
-  </div>`;
-
-  document.querySelectorAll('[data-account]').forEach((button) => {
-    button.onclick = async () => {
-      button.disabled = true;
-      button.querySelector('.role').textContent = 'Signing in…';
-      try {
-        await signIn(ACCOUNTS[Number(button.dataset.account)]);
-      } catch (error) {
-        toast(error.message, true);
-        renderLogin();
-      }
-    };
+  renderSignIn(app, {
+    accounts: ACCOUNTS,
+    onPick: signIn,
+    onHome: () => (location.hash = '#/'),
   });
+}
+
+function renderHome() {
+  renderLanding(app, { onSignIn: () => (location.hash = session.token ? '#/dashboard' : '#/login') });
 }
 
 async function renderDashboard() {
@@ -331,7 +309,7 @@ async function renderAdminDashboard() {
     const overall = averages.length ? (averages.reduce((sum, s) => sum + s.average, 0) / averages.length).toFixed(1) : '–';
     const noResults = performance.students.filter((s) => s.average == null).length;
 
-    document.getElementById('stats').innerHTML = `<div class="grid cols-4">
+    byId('stats').innerHTML = `<div class="grid cols-4">
       ${statCard('Students', students.total, `Enrolled in ${esc(performance.session.name)}`, 'good')}
       ${statCard('Teachers', teachers.total, 'Across 5 subjects', 'good')}
       ${statCard('Classes', classes.total, 'SS2 A', '')}
@@ -340,7 +318,7 @@ async function renderAdminDashboard() {
 
     const subjectRows = performance.subjects.map((s) => ({ label: s.subject, value: s.average }));
     const attentionCount = averages.filter((s) => s.average < 60).length;
-    document.getElementById('panels').innerHTML = `
+    byId('panels').innerHTML = `
       <div class="card">
         <div class="card-head"><div><h3>Academic performance by subject</h3><p>Average total out of 100 · ${esc(performance.term.name)}</p></div><span class="badge brand">Overall ${overall}</span></div>
         <div class="card-pad">${bars(subjectRows)}</div>
@@ -358,7 +336,7 @@ async function renderAdminDashboard() {
       </div>`;
     document.querySelectorAll('[data-go]').forEach((el) => (el.onclick = () => (location.hash = el.dataset.go)));
   } catch (error) {
-    document.getElementById('stats').innerHTML = errorBox(error, true);
+    byId('stats').innerHTML = errorBox(error, true);
     bindRetry(renderAdminDashboard);
   }
 }
@@ -383,7 +361,7 @@ async function renderTeacherDashboard() {
     const mine = performance.subjects.filter((s) => mySubjects.has(s.subject));
     const focus = mine[0];
 
-    document.getElementById('stats').innerHTML = `<div class="grid cols-3">
+    byId('stats').innerHTML = `<div class="grid cols-3">
       ${statCard('My classes', new Set(assignments.map((a) => a.class)).size, esc([...new Set(assignments.map((a) => a.class))].join(', ')), 'good')}
       ${statCard('My pupils', students.total, 'Pupils I teach this session', 'good')}
       ${statCard(`${esc(focus?.subject ?? 'Subject')} average`, focus ? focus.average : '–', focus ? `${focus.below50} pupils below 50` : 'No results yet', focus && focus.average < 60 ? 'warn' : 'good')}
@@ -396,7 +374,7 @@ async function renderTeacherDashboard() {
           .sort((a, b) => a.score.total - b.score.total)
       : [];
 
-    document.getElementById('panels').innerHTML = `
+    byId('panels').innerHTML = `
       <div class="card">
         <div class="card-head"><div><h3>My classes and subjects</h3><p>From my teaching assignments</p></div></div>
         <div class="card-pad">${assignments.length ? assignments.map((a) => `<div class="attention"><div class="avatar">${icon('class', 16)}</div><div><strong>${esc(a.class)} · ${esc(a.subject)}</strong><div class="muted small">Taught by ${esc(a.teacher)}</div></div></div>`).join('') : '<div class="empty">No teaching assignments yet.</div>'}</div>
@@ -406,7 +384,7 @@ async function renderTeacherDashboard() {
         <div class="card-pad" style="max-height:340px;overflow:auto">${rows.length ? bars(rows.map((r) => ({ label: r.name, value: r.score.total }))) : '<div class="empty">No results recorded yet.</div>'}</div>
       </div>`;
   } catch (error) {
-    document.getElementById('stats').innerHTML = errorBox(error, true);
+    byId('stats').innerHTML = errorBox(error, true);
     bindRetry(renderTeacherDashboard);
   }
 }
@@ -416,11 +394,11 @@ async function renderStudentDashboard() {
   try {
     const performance = await api('/results/performance');
     const me = performance.students[0];
-    document.getElementById('panels').innerHTML = me ? `
+    byId('panels').innerHTML = me ? `
       <div class="grid cols-3">${statCard('Average', me.average ?? '–', `${esc(performance.term.name)}`, 'good')}${statCard('Subjects', me.subjects.length, 'Results recorded', '')}${statCard('Class', esc(me.class), esc(performance.session.name), '')}</div>
       <div class="card" style="margin-top:18px"><div class="card-head"><h3>My results</h3></div><div class="card-pad">${bars(me.subjects.map((s) => ({ label: s.subject, value: s.total })))}</div></div>` : '<div class="card empty">No results yet.</div>';
   } catch (error) {
-    document.getElementById('panels').innerHTML = errorBox(error);
+    byId('panels').innerHTML = errorBox(error);
   }
 }
 
@@ -439,18 +417,18 @@ async function renderStudents() {
     </div>
     <div class="card"><div class="table-wrap" id="table"><div class="card-pad"><div class="skeleton" style="height:220px"></div></div></div></div>`);
 
-  if (admin) document.getElementById('add').onclick = () => studentModal();
+  if (admin) byId('add').onclick = () => studentModal();
 
   try {
     const [list, performance] = await Promise.all([api('/students?limit=100'), api('/results/performance').catch(() => null)]);
-    const byId = new Map((performance?.students ?? []).map((s) => [s.studentId, s]));
+    const resultsById = new Map((performance?.students ?? []).map((s) => [s.studentId, s]));
     const rows = list.items;
 
-    document.getElementById('table').innerHTML = rows.length ? `
+    byId('table').innerHTML = rows.length ? `
       <table>
         <thead><tr><th>Student</th><th>Class</th><th class="num">Average</th>${admin ? '<th class="num">Attendance</th><th></th>' : ''}</tr></thead>
         <tbody>${rows.map((student) => {
-          const perf = byId.get(student.id);
+          const perf = resultsById.get(student.id);
           const name = `${student.firstName} ${student.lastName}`;
           return `<tr>
             <td><div class="name-cell"><div class="avatar">${esc(initials(name))}</div><div><strong>${esc(name)}</strong>${student.admissionNumber ? `<div class="muted small">${esc(student.admissionNumber)}</div>` : ''}</div></div></td>
@@ -475,7 +453,7 @@ async function renderStudents() {
       }
     }));
   } catch (error) {
-    document.getElementById('table').innerHTML = errorBox(error, true);
+    byId('table').innerHTML = errorBox(error, true);
     bindRetry(renderStudents);
   }
 }
@@ -596,13 +574,13 @@ async function renderTeachers() {
     <div class="page-head"><div><h1>Teachers</h1><p>Teaching staff and what they teach.</p></div>
       ${admin ? `<button class="btn primary" id="add">${icon('plus')} Add teacher</button>` : ''}</div>
     <div class="card"><div class="table-wrap" id="table"><div class="card-pad"><div class="skeleton" style="height:200px"></div></div></div></div>`);
-  if (admin) document.getElementById('add').onclick = () => teacherModal();
+  if (admin) byId('add').onclick = () => teacherModal();
   try {
     const [list, assignments] = await Promise.all([api('/teachers?limit=100'), api('/ai/teacher/assignments')]);
     const subjects = new Map();
     for (const a of assignments) subjects.set(a.teacher, [...(subjects.get(a.teacher) ?? []), `${a.subject} · ${a.class}`]);
     const rows = list.items;
-    document.getElementById('table').innerHTML = rows.length ? `
+    byId('table').innerHTML = rows.length ? `
       <table><thead><tr><th>Teacher</th><th>Teaches</th><th>Sign-in</th>${admin ? '<th></th>' : ''}</tr></thead>
       <tbody>${rows.map((t) => {
         const name = `${t.firstName} ${t.lastName}`;
@@ -628,7 +606,7 @@ async function renderTeachers() {
       }
     }));
   } catch (error) {
-    document.getElementById('table').innerHTML = errorBox(error, true);
+    byId('table').innerHTML = errorBox(error, true);
     bindRetry(renderTeachers);
   }
 }
@@ -693,7 +671,7 @@ async function renderResults() {
   try {
     const performance = await api('/results/performance');
     const subjects = performance.subjects.map((s) => s.subject);
-    document.getElementById('table').innerHTML = `
+    byId('table').innerHTML = `
       <table><thead><tr><th>Student</th>${subjects.map((s) => `<th class="num">${esc(s)}</th>`).join('')}<th class="num">Average</th></tr></thead>
       <tbody>${performance.students.map((student) => `<tr><td><strong>${esc(student.name)}</strong></td>
         ${subjects.map((name) => {
@@ -703,7 +681,7 @@ async function renderResults() {
         <td class="num"><b>${student.average ?? '–'}</b></td></tr>`).join('')}</tbody></table>
       <div class="meta-line">${esc(performance.session.name)} · ${esc(performance.term.name)} · Hover a score for its breakdown</div>`;
   } catch (error) {
-    document.getElementById('table').innerHTML = errorBox(error, true);
+    byId('table').innerHTML = errorBox(error, true);
     bindRetry(renderResults);
   }
 }
@@ -731,7 +709,7 @@ async function renderScores() {
   try {
     scoreState.options = await api('/results/sheets');
     if (!scoreState.options.length) {
-      document.getElementById('picker').innerHTML = '<div class="empty">You have no class subjects to score this session.</div>';
+      byId('picker').innerHTML = '<div class="empty">You have no class subjects to score this session.</div>';
       return;
     }
     const option = scoreState.options.find((o) => o.classSubjectId === scoreState.optionId) ?? scoreState.options[0];
@@ -742,13 +720,13 @@ async function renderScores() {
     drawPicker(option);
     await loadSheet();
   } catch (error) {
-    document.getElementById('picker').innerHTML = errorBox(error, true);
+    byId('picker').innerHTML = errorBox(error, true);
     bindRetry(renderScores);
   }
 }
 
 function drawPicker(option) {
-  const picker = document.getElementById('picker');
+  const picker = byId('picker');
   picker.innerHTML = `
     <div class="field"><label for="sc-sheet">Subject and class</label><select id="sc-sheet">${scoreState.options.map((o) =>
       `<option value="${esc(o.classSubjectId)}"${o.classSubjectId === scoreState.optionId ? ' selected' : ''}>${esc(o.subject)} · ${esc(o.class)}</option>`).join('')}</select></div>
@@ -764,7 +742,7 @@ function drawPicker(option) {
 }
 
 async function loadSheet() {
-  const target = document.getElementById('sheet');
+  const target = byId('sheet');
   target.innerHTML = '<div class="card-pad"><div class="skeleton" style="height:260px"></div></div>';
   try {
     scoreState.sheet = await api(`/results/sheet?classSubjectId=${encodeURIComponent(scoreState.optionId)}&termId=${encodeURIComponent(scoreState.termId)}`);
@@ -781,7 +759,7 @@ function drawSheet() {
   const sheet = scoreState.sheet;
   if (!sheet) return;
   const active = ASSESSMENTS.find((a) => a.key === scoreState.assessment);
-  const target = document.getElementById('sheet');
+  const target = byId('sheet');
 
   target.innerHTML = `
     <table class="score-table"><thead><tr><th>Student</th>${ASSESSMENTS.map((a) =>
@@ -858,10 +836,10 @@ async function renderAttendance() {
     const performance = await api('/results/performance');
     const rated = performance.students.filter((s) => s.attendanceRate != null).sort((a, b) => a.attendanceRate - b.attendanceRate);
     const missing = performance.students.filter((s) => s.attendanceRate == null);
-    document.getElementById('table').innerHTML = bars(rated.map((s) => ({ label: s.name, value: s.attendanceRate })), { suffix: '%', danger: 75, warn: 85 })
+    byId('table').innerHTML = bars(rated.map((s) => ({ label: s.name, value: s.attendanceRate })), { suffix: '%', danger: 75, warn: 85 })
       + (missing.length ? `<p class="muted small" style="margin-top:14px">No register recorded for: ${missing.map((s) => esc(s.name)).join(', ')}.</p>` : '');
   } catch (error) {
-    document.getElementById('table').innerHTML = errorBox(error, true);
+    byId('table').innerHTML = errorBox(error, true);
     bindRetry(renderAttendance);
   }
 }
@@ -898,23 +876,24 @@ async function renderAdminCopilot() {
       <form class="card card-pad" id="ask">
         <div class="field"><label for="class">Class</label><select id="class" required><option>Loading classes…</option></select></div>
         <div class="field"><label for="q">Your request</label><textarea id="q" rows="4">Analyze SS2 students' academic performance and identify areas requiring attention.</textarea></div>
-        <button class="btn primary" type="submit" style="width:100%;justify-content:center">${icon('spark')} Analyze</button>
+        <button class="btn primary" type="submit" style="width:100%;justify-content:center" disabled>${icon('spark')} Analyze</button>
         <p class="muted small" style="margin:12px 0 0">Uses 2025/2026 · Second Term results and registers.</p>
       </form>
     </div>`);
 
-  const select = document.getElementById('class');
+  const select = byId('class');
   try {
     const [classes, grades] = await Promise.all([api('/classes?limit=100'), api('/grade-levels?limit=100')]);
     const gradeName = new Map(grades.items.map((g) => [g.id, g.name]));
     select.innerHTML = classes.items.map((c) => `<option value="${esc(c.id)}">${esc(`${gradeName.get(c.gradeLevelId) ?? ''} ${c.arm}`.trim())}</option>`).join('');
+    readyWhenChosen(select);
   } catch (error) {
     select.innerHTML = '<option>Could not load classes</option>';
   }
 
-  document.getElementById('ask').onsubmit = async (event) => {
+  byId('ask').onsubmit = async (event) => {
     event.preventDefault();
-    const output = document.getElementById('output');
+    const output = byId('output');
     const button = event.target.querySelector('[type=submit]');
     button.disabled = true;
     output.innerHTML = thinking(['Checking your permissions', 'Retrieving SS2 A results for Second Term', 'Retrieving attendance registers', 'Analysing with CyberSchola AI']);
@@ -922,7 +901,7 @@ async function renderAdminCopilot() {
     const steps = runSteps(done);
 
     try {
-      const insight = await api('/ai/admin/performance', { method: 'POST', body: { classId: select.value, question: document.getElementById('q').value } });
+      const insight = await api('/ai/admin/performance', { method: 'POST', body: { classId: select.value, question: byId('q').value } });
       done.value = true;
       await Promise.race([steps, sleep(50)]);
       output.innerHTML = adminInsight(insight);
@@ -959,25 +938,26 @@ async function renderTeacherCopilot() {
         <div class="field"><label for="dur">Duration (minutes)</label><input id="dur" type="number" min="10" max="180" value="40"></div>
         <div class="field"><label for="obj">Learning objectives (one per line)</label><textarea id="obj" rows="4">Explain Newton's three laws.
 Apply Newton's laws to simple real-world examples.</textarea></div>
-        <button class="btn primary" type="submit" style="width:100%;justify-content:center">${icon('spark')} Generate Lesson Plan</button>
+        <button class="btn primary" type="submit" style="width:100%;justify-content:center" disabled>${icon('spark')} Generate Lesson Plan</button>
       </form>
     </div>`);
 
-  const select = document.getElementById('cs');
+  const select = byId('cs');
   try {
     const assignments = await api('/ai/teacher/assignments');
     select.innerHTML = assignments.length
       ? assignments.map((a) => `<option value="${esc(a.classSubjectId)}" ${a.subject === 'Physics' ? 'selected' : ''}>${esc(a.subject)} · ${esc(a.class)}</option>`).join('')
       : '<option value="">You have no teaching assignments</option>';
+    readyWhenChosen(select);
   } catch {
     select.innerHTML = '<option value="">Could not load your classes</option>';
   }
 
-  document.getElementById('ask').onsubmit = async (event) => {
+  byId('ask').onsubmit = async (event) => {
     event.preventDefault();
-    const output = document.getElementById('output');
+    const output = byId('output');
     const button = event.target.querySelector('[type=submit]');
-    const objectives = document.getElementById('obj').value.split('\n').map((line) => line.trim()).filter(Boolean);
+    const objectives = byId('obj').value.split('\n').map((line) => line.trim()).filter(Boolean);
     button.disabled = true;
     output.innerHTML = thinking(['Checking your teaching assignment', 'Aligning with the SS2 curriculum', 'Drafting the lesson stages']);
     const done = { value: false };
@@ -986,7 +966,7 @@ Apply Newton's laws to simple real-world examples.</textarea></div>
     try {
       const plan = await api('/ai/teacher/lesson-plan', {
         method: 'POST',
-        body: { classSubjectId: select.value, topic: document.getElementById('topic').value, durationMinutes: Number(document.getElementById('dur').value), objectives },
+        body: { classSubjectId: select.value, topic: byId('topic').value, durationMinutes: Number(byId('dur').value), objectives },
       });
       done.value = true;
       await Promise.race([steps, sleep(50)]);
@@ -1043,7 +1023,7 @@ async function renderStudentCopilot() {
         <div class="field"><label>I want</label><div class="seg" role="tablist">${STUDY_GOALS.map((g, i) =>
           `<button type="button" role="tab" class="seg-btn${i === 0 ? ' on' : ''}" data-goal="${g.key}" aria-selected="${i === 0}">${g.label}</button>`).join('')}</div></div>
         <div class="field"><label for="q">Anything specific? <span class="muted">(optional)</span></label><textarea id="q" rows="3" maxlength="500" placeholder="For example: I keep getting the sign wrong when I factorise."></textarea></div>
-        <button class="btn primary" type="submit" style="width:100%;justify-content:center">${icon('spark')} Help me study</button>
+        <button class="btn primary" type="submit" style="width:100%;justify-content:center" disabled>${icon('spark')} Help me study</button>
       </form>
     </div>`);
 
@@ -1055,8 +1035,8 @@ async function renderStudentCopilot() {
     };
   });
 
-  const select = document.getElementById('subj');
-  const focus = document.getElementById('focus');
+  const select = byId('subj');
+  const focus = byId('focus');
   try {
     const performance = await api('/results/performance');
     const mine = [...(performance.students[0]?.subjects ?? [])].sort((a, b) => a.total - b.total);
@@ -1065,6 +1045,7 @@ async function renderStudentCopilot() {
       focus.textContent = 'Your results are not recorded yet, so there is nothing to personalise.';
     } else {
       select.innerHTML = mine.map((s) => `<option value="${esc(s.subjectId)}">${esc(s.subject)} · ${esc(s.total)}/100</option>`).join('');
+      readyWhenChosen(select);
       focus.innerHTML = `Focus first on <b>${esc(mine[0].subject)}</b>: your lowest total this term, ${esc(mine[0].total)}/100.`;
     }
   } catch (error) {
@@ -1072,9 +1053,9 @@ async function renderStudentCopilot() {
     focus.textContent = error.message;
   }
 
-  document.getElementById('ask').onsubmit = async (event) => {
+  byId('ask').onsubmit = async (event) => {
     event.preventDefault();
-    const output = document.getElementById('output');
+    const output = byId('output');
     const button = event.target.querySelector('[type=submit]');
     const subject = select.options[select.selectedIndex]?.text.split(' · ')[0] ?? 'your subject';
     button.disabled = true;
@@ -1084,7 +1065,7 @@ async function renderStudentCopilot() {
     try {
       const help = await api('/ai/student/study-help', {
         method: 'POST',
-        body: { subjectId: select.value, topic: document.getElementById('topic').value.trim(), goal, question: document.getElementById('q').value.trim() || undefined },
+        body: { subjectId: select.value, topic: byId('topic').value.trim(), goal, question: byId('q').value.trim() || undefined },
       });
       done.value = true;
       await Promise.race([steps, sleep(50)]);
@@ -1130,12 +1111,38 @@ function renderSoon(key) {
 
 // ---------------------------------------------------------------- router
 
+/** Which kind of page is showing, so only moves between kinds animate. */
+let lastKind = null;
+
+/**
+ * Cross-fades between the home page, sign-in and the app with the View
+ * Transitions API where the browser has it. Moves within the app stay instant.
+ */
+function transition(kind, render) {
+  const animate = lastKind !== null && lastKind !== kind && document.startViewTransition
+    && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  lastKind = kind;
+  if (!animate) return render();
+  document.startViewTransition(() => { render(); });
+}
+
 async function route() {
-  const hash = location.hash || '#/login';
+  const hash = location.hash || '#/';
+  app.__cleanup?.();
+  app.__cleanup = null;
+
+  if (hash === '#/' || hash === '#/home') {
+    window.scrollTo(0, 0);
+    return transition('home', renderHome);
+  }
 
   if (!session.token) {
-    if (hash !== '#/login') location.hash = '#/login';
-    return renderLogin();
+    if (hash !== '#/login') {
+      location.hash = '#/login';
+      return;
+    }
+    window.scrollTo(0, 0);
+    return transition('signin', renderLogin);
   }
 
   if (!session.school) {
@@ -1160,7 +1167,7 @@ async function route() {
   };
 
   window.scrollTo(0, 0);
-  return (pages[page] ?? renderDashboard)();
+  return transition('app', () => (pages[page] ?? renderDashboard)());
 }
 
 window.addEventListener('hashchange', route);
