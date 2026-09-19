@@ -671,12 +671,12 @@ function drawSheet() {
 
   target.innerHTML = `
     <table class="score-table"><thead><tr><th>Student</th>${ASSESSMENTS.map((a) =>
-      `<th class="num${a === active ? ' active-col' : ''}">${a.label} /${a.max}</th>`).join('')}<th class="num">Total /100</th></tr></thead>
+      `<th class="num${a === active ? ' active-col' : ' other-col'}">${a.label} /${a.max}</th>`).join('')}<th class="num">Total /100</th></tr></thead>
     <tbody>${sheet.pupils.map((pupil) => `<tr data-student="${esc(pupil.studentId)}">
       <td><div class="name-cell"><div class="avatar">${esc(initials(pupil.name))}</div><strong>${esc(pupil.name)}</strong></div></td>
       ${ASSESSMENTS.map((a) => a === active
         ? `<td class="num active-col"><input class="score-input" type="number" inputmode="decimal" min="0" max="${a.max}" step="0.5" value="${pupil[a.field] ?? ''}" data-was="${pupil[a.field] ?? ''}" aria-label="${esc(pupil.name)} ${a.label}" placeholder="–"></td>`
-        : `<td class="num">${pupil[a.field] ?? '<span class="muted">–</span>'}</td>`).join('')}
+        : `<td class="num other-col">${pupil[a.field] ?? '<span class="muted">–</span>'}</td>`).join('')}
       <td class="num"><span class="badge total">${pupil.total}</span></td></tr>`).join('')}</tbody></table>
     <div class="score-foot"><span class="muted small" id="sc-status"></span>
       <button class="btn primary" id="sc-save" disabled>${icon('check', 16)} Save ${active.label}</button></div>`;
