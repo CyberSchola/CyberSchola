@@ -32,13 +32,17 @@ describe('AI chat security boundary', () => {
     controller = new AiChatController({ chat } as unknown as AiService);
   });
 
-  async function invokeAs(role: string | undefined) {
+  async function invoke(context: {
+    tenantId?: string;
+    userId?: string;
+    role?: string;
+  }) {
     return runWithRequestContext(
       {
         origin: 'http',
-        tenantId: 'tenant-1',
-        userId: 'user-1',
-        roles: role === undefined ? undefined : [role],
+        tenantId: context.tenantId,
+        userId: context.userId,
+        roles: context.role === undefined ? undefined : [context.role],
         requestId: 'request-1',
       },
       () =>
@@ -60,7 +64,9 @@ describe('AI chat security boundary', () => {
   });
 
   it.each(Object.values(Role))('allows supported role %s to reach AiService', async (role) => {
-    await expect(invokeAs(role)).resolves.toEqual({ message: 'ok' });
+    await expect(invoke({ tenantId: 'tenant-1', userId: 'user-1', role })).resolves.toEqual({
+      message: 'ok',
+    });
 
     expect(chat).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -74,12 +80,26 @@ describe('AI chat security boundary', () => {
   });
 
   it('rejects an unknown role before AiService is reached', async () => {
-    await expect(invokeAs('SUPER_ADMIN')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      invoke({ tenantId: 'tenant-1', userId: 'user-1', role: 'SUPER_ADMIN' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
     expect(chat).not.toHaveBeenCalled();
   });
 
   it('rejects a request with no resolved roles before AiService is reached', async () => {
-    await expect(invokeAs(undefined)).rejects.toBeInstanceOf(UnauthenticatedException);
+    await expect(invoke({ tenantId: 'tenant-1', userId: 'user-1' })).rejects.toBeInstanceOf(
+      UnauthenticatedException,
+    );
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('rejects a request with no tenant before AiService is reached', async () => {
+    await expect(invoke({ userId: 'user-1', role: Role.Teacher })).rejects.toThrow();
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('rejects a request with no user before AiService is reached', async () => {
+    await expect(invoke({ tenantId: 'tenant-1', role: Role.Teacher })).rejects.toThrow();
     expect(chat).not.toHaveBeenCalled();
   });
 });
