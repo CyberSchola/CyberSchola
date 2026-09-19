@@ -1,0 +1,11 @@
+# Only what the image build reads. Everything else stays out of the build
+# context, and above all any .env file, which must never reach an image layer.
+*
+!package.json
+!pnpm-lock.yaml
+!tsconfig.json
+!tsconfig.build.json
+!nest-cli.json
+!src
+!certs
+src/**/*.spec.ts
