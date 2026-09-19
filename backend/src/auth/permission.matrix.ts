@@ -86,6 +86,12 @@ export enum Permission {
    * it and why.
    */
   AttendanceCorrect = 'attendance.correct',
+  /**
+   * See assessment results. Whose is the student scope's question: the school
+   * for an administrator, the pupils a teacher teaches, a parent's children, a
+   * pupil's own.
+   */
+  ResultRead = 'result.read',
 }
 
 /**
@@ -120,6 +126,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.StudentRead,
     Permission.PeopleManage,
     Permission.AttendanceRead,
+    Permission.ResultRead,
     Permission.AttendanceMark,
     Permission.AttendanceCorrect,
   ],
@@ -129,6 +136,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.AcademicRead,
     Permission.StudentRead,
     Permission.AttendanceRead,
+    Permission.ResultRead,
     Permission.AttendanceMark,
   ],
   [Role.Student]: [
@@ -137,6 +145,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.AcademicRead,
     Permission.StudentRead,
     Permission.AttendanceRead,
+    Permission.ResultRead,
   ],
   [Role.Parent]: [
     Permission.MembershipRead,
@@ -144,6 +153,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.AcademicRead,
     Permission.StudentRead,
     Permission.AttendanceRead,
+    Permission.ResultRead,
   ],
   // Staff mark their own attendance where self check-in is enabled, and see
   // their own. Section 18 and section 95.
