@@ -139,6 +139,8 @@ type Scores = readonly [ca1: number, ca2: number, exam: number];
  *
  * Esther Williams is absent: the plan gives her no scores.
  */
+// Kept as a table so it can be read against the plan line by line.
+// prettier-ignore
 export const DEMO_RESULTS: Readonly<Record<string, readonly Scores[]>> = {
   'Daniel Okafor': [[13, 14, 36], [17, 18, 52], [14, 15, 43], [15, 15, 44], [17, 16, 49]],
   'Chiamaka Eze': [[9, 11, 31], [16, 17, 48], [12, 13, 38], [13, 14, 41], [15, 16, 46]],
