@@ -233,6 +233,8 @@ tr:last-child td { border-bottom: 0; }
   .grid.cols-2, .row { grid-template-columns: 1fr; }
   .bar-row { grid-template-columns: 110px 1fr 44px; }
   .score-toolbar { grid-template-columns: 1fr; }
+  .seg { display: flex; width: 100%; }
+  .seg-btn { flex: 1; white-space: normal; padding: 8px 6px; line-height: 1.25; }
   .score-input { width: 72px; }
   .score-table .other-col { display: none; }
   .toast { left: 16px; right: 16px; top: 76px; text-align: center; }
