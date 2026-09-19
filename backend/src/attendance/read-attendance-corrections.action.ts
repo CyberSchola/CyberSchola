@@ -28,6 +28,9 @@ function correctionScope(): AccessScope<AttendanceCorrection> {
 
   return {
     unrestricted: false,
+    // The join is applied for everyone, but it only narrows when the record's
+    // scope does: an administrator reaches every correction in the school.
+    narrows: (actor) => records.narrows(actor),
     restrict(query, alias, actor) {
       query.innerJoin(
         Attendance,

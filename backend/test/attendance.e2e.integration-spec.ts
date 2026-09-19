@@ -284,6 +284,21 @@ describe('attendance end to end', () => {
 
         expect(items(response).map((item) => item.id)).not.toContain(b.record);
       },
+      'GET /attendance/reports': async () => {
+        // Nothing to aim at: a report cannot name a school. What must hold is that
+        // our administrator's report, grouped by class, never includes theirs.
+        const response = await request(e2e.server())
+          .get('/api/v1/attendance/reports')
+          .query({ period: 'WEEKLY', date: SCHOOL_DAY, groupBy: 'class' })
+          .set(await as(users.adminA))
+          .expect(200);
+
+        const groups = data<{ rows: Array<{ group: { id: string } }> }>(response).rows.map(
+          (row) => row.group.id,
+        );
+
+        expect(groups).not.toContain(b.class);
+      },
       'GET /attendance/:id': async () => {
         await request(e2e.server())
           .get(`/api/v1/attendance/${b.record}`)

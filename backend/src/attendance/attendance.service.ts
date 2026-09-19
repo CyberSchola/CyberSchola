@@ -25,6 +25,10 @@ import type { Attendance } from './entities/attendance.entity';
 import { MarkAttendanceAction } from './mark-attendance.action';
 import { type AttendanceFilter, ReadAttendanceAction } from './read-attendance.action';
 import { ReadAttendanceCorrectionsAction } from './read-attendance-corrections.action';
+import { attendanceScope } from './attendance-access.scope';
+import { AttendanceReportCache } from './attendance-report-cache';
+import { type AttendanceReport, ReportAttendanceAction } from './report-attendance.action';
+import type { ReportGrouping, ReportPeriod } from './report-period';
 
 /** Why a register cannot be taken twice. Shared with the route's documentation. */
 export const ALREADY_MARKED_MESSAGE =
@@ -60,7 +64,10 @@ export const OUTSIDE_TERM_MESSAGE =
  */
 @Injectable()
 export class AttendanceService {
-  constructor(private readonly transactions: TenantTransactionService) {}
+  constructor(
+    private readonly transactions: TenantTransactionService,
+    private readonly reportCache: AttendanceReportCache,
+  ) {}
 
   // -------------------------------------------------------------------------
   // Marking
@@ -74,7 +81,7 @@ export class AttendanceService {
    * learns nothing about what is already recorded in it.
    */
   markClass(classId: string, dto: MarkClassAttendanceDto): Promise<AttendanceDto[]> {
-    return this.inSchool(async (manager) => {
+    return this.written(async (manager) => {
       const marking = new MarkAttendanceAction(manager);
 
       if (!(await marking.classExists(classId))) {
@@ -135,7 +142,7 @@ export class AttendanceService {
     personId: string,
     dto: MarkEmployeeAttendanceDto,
   ): Promise<AttendanceDto> {
-    return this.inSchool(async (manager) => {
+    return this.written(async (manager) => {
       const marking = new MarkAttendanceAction(manager);
 
       // Section 95 gives a staff member their own record and nothing else, so
@@ -167,7 +174,7 @@ export class AttendanceService {
    * one; a teacher who is also a parent is unaffected either way.
    */
   checkInSelf(dto: SelfCheckInDto): Promise<AttendanceDto> {
-    return this.inSchool(async (manager) => {
+    return this.written(async (manager) => {
       const marking = new MarkAttendanceAction(manager);
       const roles = this.actorRoles();
 
@@ -236,6 +243,56 @@ export class AttendanceService {
   }
 
   // -------------------------------------------------------------------------
+  // Reporting
+  // -------------------------------------------------------------------------
+
+  /**
+   * A report over the records this caller may read, blueprint section 97.
+   *
+   * Cached only when the answer is the same for everyone who may see it, which
+   * the attendance scope decides: an actor it does not narrow reads the whole
+   * school. A narrowed report is computed every time and never stored. See
+   * `AttendanceReportCache` for why that line is where it is.
+   *
+   * The order matters and is deliberate: the generation is read before Postgres.
+   * A report computed from rows older than some write can then only be stored
+   * under the generation that write retired, which nobody reads again.
+   */
+  async report(query: {
+    period: ReportPeriod;
+    date: string;
+    groupBy: ReportGrouping;
+  }): Promise<AttendanceReport> {
+    const tenantId = requireTenantId();
+    const shared = !attendanceScope().narrows({
+      userId: requireUserId(),
+      roles: this.actorRoles(),
+    });
+    const generation = shared ? await this.reportCache.generation(tenantId) : null;
+
+    return this.inSchool(async (manager) => {
+      const reporting = new ReportAttendanceAction(manager);
+      const period = await reporting.resolvePeriod(query.period, query.date);
+
+      if (generation !== null) {
+        const cached = await this.reportCache.read(tenantId, generation, period, query.groupBy);
+
+        if (cached !== null) {
+          return cached;
+        }
+      }
+
+      const report = await reporting.summarise(period, query.groupBy);
+
+      if (generation !== null) {
+        await this.reportCache.store(tenantId, generation, report);
+      }
+
+      return report;
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // Correcting
   // -------------------------------------------------------------------------
 
@@ -248,7 +305,7 @@ export class AttendanceService {
    * that ever updates the table.
    */
   correct(id: string, dto: CorrectAttendanceDto): Promise<AttendanceDto> {
-    return this.inSchool(async (manager) => {
+    return this.written(async (manager) => {
       const reading = new ReadAttendanceAction(manager);
       const record = await this.visible(reading, id);
 
@@ -399,6 +456,24 @@ export class AttendanceService {
    */
   private actorRoles(): ReadonlySet<Role> {
     return toRoles(getRequestContext()?.roles);
+  }
+
+  /**
+   * Runs a write, and once it has committed, moves the school's reports to a new
+   * generation, section 98's write-then-invalidate.
+   *
+   * After the commit rather than inside the transaction: bumping first would let
+   * a reader take the new generation, read Postgres before the commit, and cache
+   * the old answer under the new number. The bump never fails the request; see
+   * `AttendanceReportCache.invalidate`.
+   */
+  private async written<T>(work: (manager: EntityManager) => Promise<T>): Promise<T> {
+    const tenantId = requireTenantId();
+    const result = await this.inSchool(work);
+
+    await this.reportCache.invalidate(tenantId);
+
+    return result;
   }
 
   private inSchool<T>(work: (manager: EntityManager) => Promise<T>): Promise<T> {

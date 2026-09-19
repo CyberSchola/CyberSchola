@@ -21,6 +21,7 @@ import {
   AttendanceType,
   STATUSES_BY_TYPE,
 } from './attendance.enums';
+import { ReportGrouping, ReportPeriod } from './report-period';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_MESSAGE = 'date must be a calendar date in YYYY-MM-DD form';
@@ -262,4 +263,92 @@ export class AttendanceCorrectionDto {
 
   @ApiProperty({ type: String, format: 'date-time' })
   changedAt!: string;
+}
+
+/** What a report is asked for: a period containing a date, grouped one way. */
+export class AttendanceReportQueryDto {
+  @ApiProperty({ enum: ReportPeriod, example: ReportPeriod.Weekly })
+  @IsEnum(ReportPeriod, { message: 'period must be DAILY, WEEKLY, MONTHLY, TERM or SESSION' })
+  period!: ReportPeriod;
+
+  @ApiProperty({
+    example: '2026-09-17',
+    description:
+      'Any date inside the period. WEEKLY is the Monday to Sunday week containing it, ' +
+      'MONTHLY its calendar month, TERM and SESSION the ones whose dates contain it.',
+  })
+  @Matches(ISO_DATE, { message: DATE_MESSAGE })
+  date!: string;
+
+  @ApiProperty({ enum: ReportGrouping, example: ReportGrouping.Class })
+  @IsEnum(ReportGrouping, { message: 'groupBy must be class, student, teacher, staff or role' })
+  groupBy!: ReportGrouping;
+}
+
+/** The period a report resolved to, returned so a client never guesses what "this week" meant. */
+export class ReportPeriodDto {
+  // One consistent example throughout: a term, its dates and its name. Left to
+  // defaults, Swagger paired the first enum value, DAILY, with a week's dates
+  // and a term's name, an example no real response could ever be.
+  @ApiProperty({ enum: ReportPeriod, example: ReportPeriod.Term })
+  kind!: ReportPeriod;
+
+  @ApiProperty({ example: '2026-09-01' })
+  from!: string;
+
+  @ApiProperty({ example: '2026-12-18' })
+  to!: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    example: 'First Term',
+    description: 'For TERM and SESSION.',
+  })
+  label?: string;
+}
+
+/** Which group a row counts. */
+export class ReportGroupDto {
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    example: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+    description: 'The class or person id, or the kind of person when grouping by role.',
+  })
+  id!: string | null;
+
+  @ApiProperty({ example: 'JSS 2 A' })
+  label!: string;
+}
+
+/** One group's counts for the period. */
+export class ReportRowDto {
+  @ApiProperty({ type: ReportGroupDto })
+  group!: ReportGroupDto;
+
+  @ApiProperty({ example: 180 }) present!: number;
+  @ApiProperty({ example: 8 }) absent!: number;
+  @ApiProperty({ example: 6 }) late!: number;
+  @ApiProperty({ example: 4 }) excused!: number;
+  @ApiProperty({ example: 2 }) sick!: number;
+  @ApiProperty({ example: 0 }) leave!: number;
+  @ApiProperty({ example: 200 }) total!: number;
+
+  @ApiProperty({
+    example: 0.93,
+    description: '(present + late) / total. Every absence counts, authorised or not.',
+  })
+  rate!: number;
+}
+
+/** A report: the period it covers and a row per group with records in it. */
+export class AttendanceReportDto {
+  @ApiProperty({ type: ReportPeriodDto })
+  period!: ReportPeriodDto;
+
+  @ApiProperty({ enum: ReportGrouping, example: ReportGrouping.Class })
+  groupBy!: ReportGrouping;
+
+  @ApiProperty({ type: [ReportRowDto] })
+  rows!: ReportRowDto[];
 }

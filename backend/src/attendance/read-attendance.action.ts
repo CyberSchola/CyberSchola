@@ -94,8 +94,14 @@ export class ReadAttendanceAction extends TenantScopedAction<Attendance> {
     return { ...record, status };
   }
 
-  /** The scoped query with the caller's own filters applied. */
-  private filtered(filter: AttendanceFilter): SelectQueryBuilder<Attendance> {
+  /**
+   * The scoped query with the caller's own filters applied.
+   *
+   * Protected so that `ReportAttendanceAction` aggregates exactly this query:
+   * there is one place a scoped attendance query is assembled, and a report
+   * cannot count a row the record list would not return.
+   */
+  protected filtered(filter: AttendanceFilter): SelectQueryBuilder<Attendance> {
     const query = this.scopedQuery('attendance');
 
     for (const [property, value] of [
