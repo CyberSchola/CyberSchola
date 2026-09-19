@@ -60,26 +60,23 @@ describe('AI chat security boundary', () => {
     ).toBe(Permission.AiChat);
   });
 
-  it.each(Object.values(Role))(
-    'allows supported role %s to reach AiService',
-    async (role) => {
-      await expect(
-        invoke({ tenantId: 'tenant-1', userId: 'user-1', role }),
-      ).resolves.toEqual({
-        message: 'ok',
-      });
+  it.each(Object.values(Role))('allows supported role %s to reach AiService', async (role) => {
+    await expect(
+      invoke({ tenantId: 'tenant-1', userId: 'user-1', role }),
+    ).resolves.toEqual({
+      message: 'ok',
+    });
 
-      expect(chat).toHaveBeenCalledWith(
-        expect.objectContaining({
-          tenantId: 'tenant-1',
-          userId: 'user-1',
-          role,
-          requestId: 'request-1',
-        }),
-        'hello',
-      );
-    },
-  );
+    expect(chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        userId: 'user-1',
+        role,
+        requestId: 'request-1',
+      }),
+      'hello',
+    );
+  });
 
   it('rejects an unknown role before AiService is reached', async () => {
     await expect(
