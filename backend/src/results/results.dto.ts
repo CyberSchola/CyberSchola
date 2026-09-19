@@ -181,6 +181,11 @@ export class SheetRowDto {
   total!: number;
 }
 
+export class TermNameDto {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ example: 'Second Term' }) name!: string;
+}
+
 export class MaxScoresDto {
   @ApiProperty({ example: 20 }) ca1!: number;
   @ApiProperty({ example: 20 }) ca2!: number;
@@ -191,7 +196,7 @@ export class ScoreSheetDto {
   @ApiProperty({ format: 'uuid' }) classSubjectId!: string;
   @ApiProperty({ example: 'Mathematics' }) subject!: string;
   @ApiProperty({ example: 'SS2 A' }) class!: string;
-  @ApiProperty({ type: NamedDto }) term!: NamedDto;
+  @ApiProperty({ type: TermNameDto }) term!: TermNameDto;
   @ApiProperty({ type: MaxScoresDto }) maxScores!: MaxScoresDto;
   @ApiProperty({ type: [SheetRowDto] }) pupils!: SheetRowDto[];
 }
@@ -209,6 +214,6 @@ export class SheetOptionDto {
   @ApiProperty({ format: 'uuid' }) classSubjectId!: string;
   @ApiProperty({ example: 'Mathematics' }) subject!: string;
   @ApiProperty({ example: 'SS2 A' }) class!: string;
-  @ApiProperty({ type: [NamedDto], description: "The session's terms, in order." })
-  terms!: NamedDto[];
+  @ApiProperty({ type: [TermNameDto], description: "The session's terms, in order." })
+  terms!: TermNameDto[];
 }
