@@ -92,6 +92,13 @@ export enum Permission {
    * pupil's own.
    */
   ResultRead = 'result.read',
+  /**
+   * Enter and correct assessment scores. Like marking attendance, the endpoint
+   * is not the whole rule: a teacher holding this may only enter scores for a
+   * class subject they teach in the current session. That is checked per
+   * request.
+   */
+  ResultEnter = 'result.enter',
 }
 
 /**
@@ -129,6 +136,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.ResultRead,
     Permission.AttendanceMark,
     Permission.AttendanceCorrect,
+    Permission.ResultEnter,
   ],
   [Role.Teacher]: [
     Permission.MembershipRead,
@@ -138,6 +146,7 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.AttendanceRead,
     Permission.ResultRead,
     Permission.AttendanceMark,
+    Permission.ResultEnter,
   ],
   [Role.Student]: [
     Permission.MembershipRead,

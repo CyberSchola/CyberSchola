@@ -5,6 +5,7 @@ import { Role, toRoles } from '../auth/permission.matrix';
 import { type AccessScope, scopeFor } from '../common/actions/access-scope';
 import { TenantScopedAction } from '../common/actions/tenant-scoped.action';
 import {
+  ForbiddenException,
   ResourceNotFoundException,
   ValidationFailedException,
 } from '../common/exceptions/app.exception';
@@ -12,10 +13,20 @@ import { Student } from '../people/entities/student.entity';
 import { studentScope } from '../people/student-access.scope';
 import { getRequestContext, requireTenantId, requireUserId } from '../tenancy/request-context';
 import { TenantTransactionService } from '../tenancy/tenant-transaction.service';
+import {
+  type ClassSubjectRef,
+  EnterScoresAction,
+  MAX_SCORE,
+  type SheetPupil,
+} from './enter-scores.action';
 import { Result } from './result.entity';
 import type {
   PerformanceDto,
   PerformanceQueryDto,
+  SavedScoresDto,
+  SaveScoresDto,
+  ScoreSheetDto,
+  ScoreSheetQueryDto,
   StudentPerformanceDto,
   SubjectSummaryDto,
 } from './results.dto';
@@ -111,6 +122,10 @@ const adminOnly = scopeFor<object>({ unrestrictedRoles: [Role.SchoolAdmin], byRo
 
 const round1 = (value: number) => Math.round(value * 10) / 10;
 
+/** A subject total, rounded so decimal scores add up without floating point noise. */
+const total = (entry: { ca1: number | null; ca2: number | null; exam: number | null }) =>
+  Math.round(((entry.ca1 ?? 0) + (entry.ca2 ?? 0) + (entry.exam ?? 0)) * 100) / 100;
+
 /**
  * Results, read for performance: each pupil's CA1, CA2, exam and total per
  * subject in a term, and each subject's summary.
@@ -175,7 +190,7 @@ export class ResultsService {
         .map(([subjectId, entry]) => ({
           subjectId,
           ...entry,
-          total: (entry.ca1 ?? 0) + (entry.ca2 ?? 0) + (entry.exam ?? 0),
+          total: total(entry),
         }))
         .sort((a, b) => a.subject.localeCompare(b.subject));
 
@@ -222,6 +237,151 @@ export class ResultsService {
       class: klass,
       subjects,
       students,
+    };
+  }
+
+  /** A class subject's score sheet for a term: every pupil who takes it, scored or not. */
+  sheet(query: ScoreSheetQueryDto): Promise<ScoreSheetDto> {
+    return this.inSchool(async (manager) => {
+      const entering = new EnterScoresAction(manager);
+      const { classSubject, term } = await this.sheetContext(entering, query);
+
+      return this.buildSheet(entering, classSubject, term, await entering.roster(classSubject));
+    });
+  }
+
+  /**
+   * Saves one assessment's scores for a class subject in a term.
+   *
+   * The checks run in the same order as taking a register: the class subject,
+   * then the caller's right to it, then the term, then the entries. A caller who
+   * may not enter a class subject's scores learns nothing about its pupils.
+   * Everything is written in one statement inside the request's transaction, so
+   * a refused entry leaves nothing behind.
+   */
+  save(dto: SaveScoresDto): Promise<SavedScoresDto> {
+    return this.inSchool(async (manager) => {
+      const entering = new EnterScoresAction(manager);
+      const { classSubject, term } = await this.sheetContext(entering, dto);
+      const max = MAX_SCORE[dto.assessmentType];
+      const studentIds = dto.entries.map((entry) => entry.studentId);
+
+      if (new Set(studentIds).size !== studentIds.length) {
+        throw new ValidationFailedException(['entries must not name the same pupil twice']);
+      }
+
+      const over = dto.entries.filter((entry) => entry.score > max);
+
+      if (over.length > 0) {
+        throw new ValidationFailedException([
+          `${dto.assessmentType} is out of ${max}. Over it: ${over.map((e) => e.studentId).join(', ')}.`,
+        ]);
+      }
+
+      const roster = await entering.roster(classSubject);
+      const enrolments = new Map(roster.map((pupil) => [pupil.studentId, pupil.enrolmentId]));
+      const outside = studentIds.filter((studentId) => !enrolments.has(studentId));
+
+      if (outside.length > 0) {
+        throw new ValidationFailedException([
+          `Not taking ${classSubject.subject} in ${classSubject.className}: ${outside.join(', ')}.`,
+        ]);
+      }
+
+      const recordedBy = await entering.actingMembershipId();
+
+      if (recordedBy === null) {
+        throw new ForbiddenException('Only an active member of the school can enter scores.');
+      }
+
+      const counts = await entering.upsert({
+        classSubject,
+        termId: term.id,
+        assessmentType: dto.assessmentType,
+        assessedOn: dto.assessedOn ?? null,
+        recordedBy,
+        entries: dto.entries.map((entry) => ({
+          studentId: entry.studentId,
+          enrolmentId: enrolments.get(entry.studentId)!,
+          score: entry.score,
+          remarks: entry.remarks ?? null,
+        })),
+      });
+
+      return {
+        ...(await this.buildSheet(entering, classSubject, term, roster)),
+        assessmentType: dto.assessmentType,
+        ...counts,
+      };
+    });
+  }
+
+  /** The class subject and term of a sheet, once the caller may use them. */
+  private async sheetContext(entering: EnterScoresAction, query: ScoreSheetQueryDto) {
+    const classSubject = await entering.classSubject(query.classSubjectId);
+
+    if (classSubject === null) {
+      throw new ResourceNotFoundException();
+    }
+
+    if (!(await entering.mayEnter(classSubject))) {
+      throw new ForbiddenException(
+        'You can only enter scores for a subject you teach in the current session.',
+      );
+    }
+
+    const term = await entering.term(query.termId);
+
+    if (term === null) {
+      throw new ResourceNotFoundException();
+    }
+
+    if (term.sessionId !== classSubject.sessionId) {
+      throw new ValidationFailedException([
+        `${term.name} is not a term of ${classSubject.className}'s session.`,
+      ]);
+    }
+
+    return { classSubject, term };
+  }
+
+  private async buildSheet(
+    entering: EnterScoresAction,
+    classSubject: ClassSubjectRef,
+    term: { id: string; name: string },
+    roster: readonly SheetPupil[],
+  ): Promise<ScoreSheetDto> {
+    const scores = await entering.scores(classSubject.id, term.id);
+    const byPupil = new Map<
+      string,
+      { ca1: number | null; ca2: number | null; exam: number | null }
+    >();
+
+    for (const score of scores) {
+      const row = byPupil.get(score.studentId) ?? { ca1: null, ca2: null, exam: null };
+
+      if (score.assessmentType === 'CA1') row.ca1 = score.score;
+      if (score.assessmentType === 'CA2') row.ca2 = score.score;
+      if (score.assessmentType === 'EXAM') row.exam = score.score;
+      byPupil.set(score.studentId, row);
+    }
+
+    return {
+      classSubjectId: classSubject.id,
+      subject: classSubject.subject,
+      class: classSubject.className,
+      term: { id: term.id, name: term.name },
+      maxScores: { ca1: MAX_SCORE.CA1, ca2: MAX_SCORE.CA2, exam: MAX_SCORE.EXAM },
+      pupils: roster.map((pupil) => {
+        const row = byPupil.get(pupil.studentId) ?? { ca1: null, ca2: null, exam: null };
+
+        return {
+          studentId: pupil.studentId,
+          name: pupil.name,
+          ...row,
+          total: total(row),
+        };
+      }),
     };
   }
 
