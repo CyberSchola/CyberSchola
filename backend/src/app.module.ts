@@ -17,6 +17,7 @@ import { HealthModule } from './health/health.module';
 import { IdentityModule } from './identity/identity.module';
 import { PeopleModule } from './people/people.module';
 import { RedisModule } from './redis/redis.module';
+import { ResultsModule } from './results/results.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { TimetableModule } from './timetable/timetable.module';
 
@@ -46,6 +47,7 @@ import { TimetableModule } from './timetable/timetable.module';
     PeopleModule,
     AttendanceModule,
     TimetableModule,
+    ResultsModule,
     HealthModule,
   ],
   /**

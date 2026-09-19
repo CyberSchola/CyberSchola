@@ -123,3 +123,32 @@ export function absentDayIndexes(presentPercent: number, schoolDays: number): Se
 
   return indexes;
 }
+
+/** An assessment's maximum score, per the plan: CA1 and CA2 out of 20, the exam out of 60. */
+export const DEMO_ASSESSMENTS = [
+  { type: 'CA1', maxScore: 20, assessedOn: '2026-02-06' },
+  { type: 'CA2', maxScore: 20, assessedOn: '2026-03-20' },
+  { type: 'EXAM', maxScore: 60, assessedOn: '2026-05-15' },
+] as const;
+
+type Scores = readonly [ca1: number, ca2: number, exam: number];
+
+/**
+ * Second Term scores from the plan, by pupil, in DEMO_SUBJECTS order:
+ * Mathematics, English Language, Physics, Chemistry, Biology.
+ *
+ * Esther Williams is absent: the plan gives her no scores.
+ */
+export const DEMO_RESULTS: Readonly<Record<string, readonly Scores[]>> = {
+  'Daniel Okafor': [[13, 14, 36], [17, 18, 52], [14, 15, 43], [15, 15, 44], [17, 16, 49]],
+  'Chiamaka Eze': [[9, 11, 31], [16, 17, 48], [12, 13, 38], [13, 14, 41], [15, 16, 46]],
+  'Samuel Adeyemi': [[7, 9, 27], [14, 15, 43], [10, 11, 34], [12, 13, 38], [14, 15, 43]],
+  'Favour Johnson': [[15, 16, 46], [18, 18, 54], [16, 15, 46], [16, 17, 48], [17, 18, 51]],
+  'David Ibrahim': [[10, 11, 30], [15, 16, 46], [13, 12, 37], [14, 14, 40], [15, 15, 44]],
+  'Michael Obi': [[6, 8, 25], [13, 14, 40], [9, 10, 30], [11, 12, 36], [13, 14, 41]],
+  'Ada Nwosu': [[16, 17, 49], [18, 19, 55], [15, 16, 47], [16, 16, 48], [18, 17, 52]],
+  'Joseph Murktar': [[8, 10, 28], [15, 15, 44], [11, 12, 35], [12, 13, 39], [14, 15, 43]],
+  'Blessing Okafor': [[11, 12, 34], [16, 17, 49], [13, 14, 41], [14, 14, 42], [16, 16, 47]],
+  'Emmanuel Chukwu': [[5, 7, 23], [12, 13, 38], [8, 9, 28], [10, 11, 34], [12, 13, 39]],
+  'Maryam Yusuf': [[13, 14, 39], [17, 18, 52], [12, 14, 40], [15, 15, 44], [16, 17, 48]],
+};

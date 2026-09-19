@@ -34,6 +34,7 @@ describe('the permission matrix', () => {
       Permission.StudentRead,
       Permission.PeopleManage,
       Permission.AttendanceRead,
+      Permission.ResultRead,
       Permission.AttendanceMark,
       // Correcting a recorded status is the administrator's alone, per blueprint
       // section 95. A teacher who takes the wrong register asks for it to be
@@ -46,6 +47,7 @@ describe('the permission matrix', () => {
       Permission.AcademicRead,
       Permission.StudentRead,
       Permission.AttendanceRead,
+      Permission.ResultRead,
       // Holding this is not the whole rule: which class they may mark is decided
       // per request, from the classes they supervise this session.
       Permission.AttendanceMark,
@@ -56,6 +58,7 @@ describe('the permission matrix', () => {
       Permission.AcademicRead,
       Permission.StudentRead,
       Permission.AttendanceRead,
+      Permission.ResultRead,
     ],
     [Role.Parent]: [
       Permission.MembershipRead,
@@ -63,6 +66,7 @@ describe('the permission matrix', () => {
       Permission.AcademicRead,
       Permission.StudentRead,
       Permission.AttendanceRead,
+      Permission.ResultRead,
     ],
     // Staff see and record their own attendance, and nothing about students:
     // sections 18 and 95.
