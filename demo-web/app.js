@@ -591,25 +591,97 @@ async function addAndEnrol(body) {
 // ---------------------------------------------------------------- teachers
 
 async function renderTeachers() {
+  const admin = isAdmin();
   shell('Teachers', `
-    <div class="page-head"><div><h1>Teachers</h1><p>Teaching staff and what they teach.</p></div></div>
+    <div class="page-head"><div><h1>Teachers</h1><p>Teaching staff and what they teach.</p></div>
+      ${admin ? `<button class="btn primary" id="add">${icon('plus')} Add teacher</button>` : ''}</div>
     <div class="card"><div class="table-wrap" id="table"><div class="card-pad"><div class="skeleton" style="height:200px"></div></div></div></div>`);
+  if (admin) document.getElementById('add').onclick = () => teacherModal();
   try {
     const [list, assignments] = await Promise.all([api('/teachers?limit=100'), api('/ai/teacher/assignments')]);
     const subjects = new Map();
     for (const a of assignments) subjects.set(a.teacher, [...(subjects.get(a.teacher) ?? []), `${a.subject} · ${a.class}`]);
-    document.getElementById('table').innerHTML = `
-      <table><thead><tr><th>Teacher</th><th>Teaches</th><th>Sign-in</th></tr></thead>
-      <tbody>${list.items.map((t) => {
+    const rows = list.items;
+    document.getElementById('table').innerHTML = rows.length ? `
+      <table><thead><tr><th>Teacher</th><th>Teaches</th><th>Sign-in</th>${admin ? '<th></th>' : ''}</tr></thead>
+      <tbody>${rows.map((t) => {
         const name = `${t.firstName} ${t.lastName}`;
+        const teaches = subjects.get(name) ?? [];
+        // A teacher who signs in or teaches a class is in use: removing them
+        // would orphan their classes, so the demo only removes unused records.
+        const inUse = Boolean(t.membershipId) || teaches.length > 0;
         return `<tr><td><div class="name-cell"><div class="avatar">${esc(initials(name))}</div><strong>${esc(name)}</strong></div></td>
-          <td>${(subjects.get(name) ?? []).map((s) => `<span class="chip">${esc(s)}</span>`).join(' ') || '<span class="muted">–</span>'}</td>
-          <td>${t.membershipId ? '<span class="badge good">Has account</span>' : '<span class="badge">No account</span>'}</td></tr>`;
-      }).join('')}</tbody></table>`;
+          <td>${teaches.map((x) => `<span class="chip">${esc(x)}</span>`).join(' ') || '<span class="muted">Not assigned yet</span>'}</td>
+          <td>${t.membershipId ? '<span class="badge good">Has account</span>' : '<span class="badge">No account</span>'}</td>
+          ${admin ? `<td class="num"><button class="btn sm" data-edit="${esc(t.id)}">Edit</button> <button class="btn sm danger" data-del="${esc(t.id)}"${inUse ? ' disabled title="Teaches a class or signs in, so it stays"' : ''}>Delete</button></td>` : ''}</tr>`;
+      }).join('')}</tbody></table>` : '<div class="empty"><strong>No teachers yet</strong><p>Add the first teacher to get started.</p></div>';
+    document.querySelectorAll('[data-edit]').forEach((el) => (el.onclick = () => teacherModal(rows.find((t) => t.id === el.dataset.edit))));
+    document.querySelectorAll('[data-del]').forEach((el) => (el.onclick = async () => {
+      const teacher = rows.find((t) => t.id === el.dataset.del);
+      if (!confirm(`Remove ${teacher.firstName} ${teacher.lastName}? Their history is kept.`)) return;
+      try {
+        await api(`/teachers/${teacher.id}`, { method: 'DELETE' });
+        toast('Teacher removed.');
+        renderTeachers();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    }));
   } catch (error) {
     document.getElementById('table').innerHTML = errorBox(error, true);
     bindRetry(renderTeachers);
   }
+}
+
+function teacherModal(teacher) {
+  const editing = Boolean(teacher);
+  const back = document.createElement('div');
+  back.className = 'modal-back';
+  back.innerHTML = `
+    <form class="modal" novalidate>
+      <div class="card-head"><h3>${editing ? 'Edit teacher' : 'Add teacher'}</h3><button type="button" class="link-btn" data-close>Close</button></div>
+      <div class="body">
+        <div class="row">
+          <div class="field"><label for="tfn">First name</label><input id="tfn" name="firstName" required maxlength="120" value="${esc(teacher?.firstName ?? '')}"></div>
+          <div class="field"><label for="tln">Last name</label><input id="tln" name="lastName" required maxlength="120" value="${esc(teacher?.lastName ?? '')}"></div>
+        </div>
+        ${editing ? '' : '<p class="muted small" style="margin:0">Classes and subjects are assigned to a teacher separately.</p>'}
+        <p class="error-box small hidden" id="form-error" style="padding:8px 0 0;text-align:left"></p>
+      </div>
+      <div class="foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">${editing ? 'Save changes' : 'Add teacher'}</button></div>
+    </form>`;
+  document.body.appendChild(back);
+  back.querySelectorAll('[data-close]').forEach((el) => (el.onclick = () => back.remove()));
+  back.querySelector('#tfn').focus();
+
+  back.querySelector('form').onsubmit = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const body = { firstName: String(form.get('firstName')).trim(), lastName: String(form.get('lastName')).trim() };
+    const errorEl = back.querySelector('#form-error');
+    if (!body.firstName || !body.lastName) {
+      errorEl.textContent = 'First and last name are required.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    const submit = event.target.querySelector('[type=submit]');
+    submit.disabled = true;
+    try {
+      if (editing) {
+        await api(`/teachers/${teacher.id}`, { method: 'PATCH', body });
+        toast('Changes saved.');
+      } else {
+        await api('/teachers', { method: 'POST', body });
+        toast(`${body.firstName} ${body.lastName} added.`);
+      }
+      back.remove();
+      renderTeachers();
+    } catch (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+      submit.disabled = false;
+    }
+  };
 }
 
 // ---------------------------------------------------------------- results + attendance
