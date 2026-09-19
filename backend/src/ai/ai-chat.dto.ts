@@ -1,10 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { IsString, Matches, MaxLength } from 'class-validator';
 
 export class AiChatRequestDto {
   @ApiProperty({ maxLength: 4000, example: 'Explain photosynthesis in simple terms.' })
   @IsString()
-  @MinLength(1, { message: 'message is required' })
+  @Matches(/\S/, { message: 'message must not be empty or whitespace-only' })
   @MaxLength(4000, { message: 'message must be 4000 characters or fewer' })
   message!: string;
 }

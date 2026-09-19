@@ -5,10 +5,15 @@ import { Permission } from '../auth/permission.matrix';
 import { RequiresPermission } from '../auth/requires-permission.decorator';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
 import { SYSTEM_MESSAGES } from '../constants/system.messages';
-import { requireTenantId, requireUserId } from '../tenancy/request-context';
 import { AiChatRequestDto, AiChatResponseDto } from './ai-chat.dto';
+import { resolveAiRequestContext } from './ai-context';
 import { AiService } from './ai.service';
 
+/**
+ * Generic AI chat only. Permission.AiChat gates reaching the model — it must
+ * not become the authorization mechanism for data retrieval, tools, or
+ * role-specific capabilities; those get their own permissions when built.
+ */
 @ApiTags('AI')
 @Controller('ai/chat')
 export class AiChatController {
@@ -20,15 +25,14 @@ export class AiChatController {
   @ApiOperation({
     summary: 'Send a message to the AI assistant.',
     description:
-      'Identity, school and role are taken from the authenticated request context only. ' +
-      'Any tenantId, role or userId sent in the request body is rejected by the global ' +
-      'validation pipe, which whitelists only the fields this DTO declares.',
+      'Identity, tenant and role come only from the authenticated request context. ' +
+      'Any tenantId, userId, role, or copilot field in the body is rejected by the ' +
+      'global validation pipe, which whitelists only the fields this DTO declares.',
   })
   @ApiOkResponse({ type: AiChatResponseDto })
   async chat(@Body() body: AiChatRequestDto): Promise<AiChatResponseDto> {
-    const tenantId = requireTenantId();
-    const userId = requireUserId();
-    const reply = await this.aiService.chat(tenantId, userId, body.message);
+    const context = resolveAiRequestContext();
+    const reply = await this.aiService.chat(context, body.message);
     return { message: reply };
   }
 }

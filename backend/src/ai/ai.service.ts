@@ -1,15 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import { AI_PROVIDER, type AiProvider } from './ai-provider.interface';
+import { AI_PROVIDER, type AiProvider, type AiRequestContext } from './ai-provider.interface';
 import { AiUsageService } from './ai-usage.service';
 
 /**
- * The AI Gateway boundary for AI-02.
- *
- * Every AI request passes through here after authentication, tenant
- * resolution and permission checks (all handled by the global pipeline
- * before this is ever called). This service enforces usage limiting before
- * any provider call and is the only place AI_PROVIDER is invoked.
+ * The AI Gateway boundary. Quota is enforced before the provider is ever
+ * called; the provider is reached only through AI_PROVIDER, never imported
+ * directly by anything else.
  */
 @Injectable()
 export class AiService {
@@ -18,8 +15,9 @@ export class AiService {
     private readonly usage: AiUsageService,
   ) {}
 
-  async chat(tenantId: string, userId: string, message: string): Promise<string> {
-    await this.usage.checkAndRecord(tenantId, userId);
-    return this.provider.generateReply(message);
+  async chat(context: AiRequestContext, message: string): Promise<string> {
+    await this.usage.checkAndRecord(context.tenantId, context.userId);
+    const result = await this.provider.generate({ message, context });
+    return result.message;
   }
 }

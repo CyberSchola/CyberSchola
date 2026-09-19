@@ -262,6 +262,30 @@ describe('validateEnv', () => {
       expect(validateEnv(withEnv()).SUPABASE_URL).toBe('https://project.supabase.co');
     });
   });
+
+  describe('GROQ_API_KEY', () => {
+    it('rejects a missing key', () => {
+      const incomplete = withEnv();
+      delete (incomplete as Record<string, unknown>).GROQ_API_KEY;
+
+      expect(() => validateEnv(incomplete)).toThrow(/GROQ_API_KEY/);
+    });
+
+    it('rejects an empty string', () => {
+      expect(() => validateEnv(withEnv({ GROQ_API_KEY: '' }))).toThrow(/GROQ_API_KEY/);
+    });
+
+    it('rejects a whitespace-only value', () => {
+      // \S rather than .+ : a whitespace-only value would otherwise pass here
+      // and fail confusingly inside the Groq SDK instead of at boot.
+      expect(() => validateEnv(withEnv({ GROQ_API_KEY: '   ' }))).toThrow(/GROQ_API_KEY/);
+    });
+
+    it('accepts a real value', () => {
+      expect(validateEnv(withEnv({ GROQ_API_KEY: 'gsk_test' })).GROQ_API_KEY).toBe('gsk_test');
+    });
+  });
+
   describe('.env.example is the backend configuration contract', () => {
     /**
      * Variables the example documents but the backend never reads.

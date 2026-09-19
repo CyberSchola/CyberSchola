@@ -1,42 +1,37 @@
-import { Injectable, Logger } from '@nestjs/common';
-import Groq from 'groq-sdk';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import type Groq from 'groq-sdk';
 
-import type { AiProvider } from './ai-provider.interface';
+import { AiProviderException } from './ai-provider.exception';
+import type { AiGenerationRequest, AiGenerationResult, AiProvider } from './ai-provider.interface';
+import { GROQ_CLIENT } from './groq.constants';
 
-/**
- * Groq implementation of AiProvider.
- *
- * GROQ_API_KEY is validated at boot by env.validation.ts, not here, so a
- * missing key fails startup rather than the first request. This constructor
- * reads process.env directly because Nest providers do not receive the
- * validated EnvironmentVariables instance without a ConfigService injection,
- * and boot has already guaranteed the value is present and non-blank.
- */
 @Injectable()
 export class GroqProvider implements AiProvider {
   private readonly logger = new Logger('GroqProvider');
-  private readonly client: Groq;
   private readonly model = 'openai/gpt-oss-120b';
 
-  constructor() {
-    this.client = new Groq({ apiKey: process.env.GROQ_API_KEY });
-  }
+  constructor(@Inject(GROQ_CLIENT) private readonly client: Groq) {}
 
-  async generateReply(message: string): Promise<string> {
+  async generate(request: AiGenerationRequest): Promise<AiGenerationResult> {
     try {
       const completion = await this.client.chat.completions.create({
         model: this.model,
         max_tokens: 500,
-        messages: [{ role: 'user', content: message }],
+        messages: [{ role: 'user', content: request.message }],
       });
+
       const reply = completion.choices[0]?.message?.content;
       if (!reply) {
         throw new Error('Groq returned an empty response');
       }
-      return reply;
+
+      return { message: reply, finishReason: 'stop', model: this.model };
     } catch (error) {
-      this.logger.error('Groq request failed', error instanceof Error ? error.stack : error);
-      throw error;
+      this.logger.error(
+        `Groq request failed [requestId=${request.context.requestId}]`,
+        error instanceof Error ? error.stack : error,
+      );
+      throw new AiProviderException();
     }
   }
 }

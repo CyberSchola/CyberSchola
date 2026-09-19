@@ -146,13 +146,12 @@ export class EnvironmentVariables {
   /**
    * Server-side key for the Groq AI provider.
    *
-   * Required rather than optional, matching SUPABASE_URL above: the AI module
-   * is registered globally in AppModule, so booting without a key would mean
-   * every AI request fails at call time instead of the process failing at
-   * startup. Never exposed to the client; read only inside GroqProvider.
+   * \S rather than .+ : a whitespace-only value (e.g. "GROQ_API_KEY= ") would
+   * pass a bare presence check and then fail confusingly inside the Groq SDK
+   * instead of at boot.
    */
   @IsString()
-  @Matches(/^.+$/, { message: 'GROQ_API_KEY must be set' })
+  @Matches(/\S/, { message: 'GROQ_API_KEY must not be empty or whitespace-only' })
   GROQ_API_KEY!: string;
 }
 
