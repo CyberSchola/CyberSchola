@@ -103,4 +103,27 @@ describe('the attendance access scope', () => {
     // scope. Declaring true here would silently return unscoped rows.
     expect(scope.unrestricted).toBe(false);
   });
+
+  describe('whether an answer may be shared', () => {
+    // narrows() is what the report cache asks before storing anything, so these
+    // cells decide which reports can ever reach Redis.
+    it('does not narrow an administrator, whose report is the whole school', () => {
+      expect(scope.narrows(actorWith(Role.SchoolAdmin))).toBe(false);
+    });
+
+    it('does not narrow an administrator who holds another role as well', () => {
+      expect(scope.narrows(actorWith(Role.Teacher, Role.SchoolAdmin))).toBe(false);
+    });
+
+    it.each([Role.Teacher, Role.Parent, Role.Student, Role.Staff])(
+      'narrows a %s, whose report is theirs alone',
+      (role) => {
+        expect(scope.narrows(actorWith(role))).toBe(true);
+      },
+    );
+
+    it('narrows a member with no roles at all', () => {
+      expect(scope.narrows(actorWith())).toBe(true);
+    });
+  });
 });

@@ -6,7 +6,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 
 import { AppModule } from './app.module';
 import { setupSwagger } from './common/swagger/setup-swagger';
-import { NodeEnv } from './config/env.validation';
+import { corsOrigins, NodeEnv } from './config/env.validation';
 
 /**
  * HTTP entry point.
@@ -39,6 +39,21 @@ async function bootstrap(): Promise<void> {
   // serving HTTP.
 
   app.enableShutdownHooks();
+
+  // Browsers may call the API only from the configured origins. Bearer tokens,
+  // not cookies, so credentials stay off. With no origins configured, CORS is
+  // not enabled at all.
+  const origins = corsOrigins(process.env.CORS_ORIGINS);
+
+  if (origins.length > 0) {
+    app.enableCors({
+      origin: origins,
+      credentials: false,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+      allowedHeaders: ['Authorization', 'Content-Type', 'X-School-Id'],
+      maxAge: 600,
+    });
+  }
 
   const docsPath = setupSwagger(app, { isProduction });
 

@@ -91,6 +91,41 @@ export class CacheService {
     await this.redis.set(key, JSON.stringify(value), 'EX', ttlSeconds);
   }
 
+  /**
+   * Increments a counter and resets its expiry, atomically, returning the new value.
+   *
+   * For generation counters: a number that other keys embed, so bumping it makes
+   * every key built from the old number unreachable at once. Such a counter is
+   * still cache, not state, so it expires like everything else here; the caller
+   * must choose a TTL longer than anything built from it lives, so that when the
+   * counter lapses and restarts from 1, no key under a reused number survives.
+   *
+   * MULTI so the increment and the expiry cannot be separated by a crash, which
+   * would otherwise leave a counter with no expiry in a noeviction Redis.
+   */
+  async increment(
+    scope: CacheScope,
+    ttlSeconds: number,
+    ...parts: readonly string[]
+  ): Promise<number> {
+    if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0 || ttlSeconds > MAX_TTL_SECONDS) {
+      throw new Error(
+        `Counter TTL must be a whole number of seconds between 1 and ${MAX_TTL_SECONDS}, ` +
+          `received ${String(ttlSeconds)}.`,
+      );
+    }
+
+    const key = buildCacheKey(scope, ...parts);
+    const results = await this.redis.multi().incr(key).expire(key, ttlSeconds).exec();
+    const [error, value] = results?.[0] ?? [new Error('The increment returned no result.'), null];
+
+    if (error) {
+      throw error;
+    }
+
+    return Number(value);
+  }
+
   /** Removes one key. Used after a write, so the next read rebuilds it. */
   async del(scope: CacheScope, ...parts: readonly string[]): Promise<void> {
     await this.redis.del(buildCacheKey(scope, ...parts));

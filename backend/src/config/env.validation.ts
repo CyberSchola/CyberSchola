@@ -142,6 +142,63 @@ export class EnvironmentVariables {
   @IsString()
   @Matches(/^https:\/\/.+/, { message: 'SUPABASE_JWKS_URL must be an https:// URL' })
   SUPABASE_JWKS_URL!: string;
+
+  /**
+   * Browser origins allowed to call the API, comma-separated, such as
+   * `https://app.example.com,http://localhost:3001`.
+   *
+   * Absent means no cross-origin browser access at all, which is the right
+   * default for an API that only servers and its own documentation call. Each
+   * entry is an exact origin: a scheme, a host and an optional port, with no
+   * path and no wildcard, because a pattern here is how a lookalike domain
+   * gets in.
+   */
+  @IsOptional()
+  @Matches(/^https?:\/\/[a-z0-9.-]+(:\d{1,5})?(,https?:\/\/[a-z0-9.-]+(:\d{1,5})?)*$/, {
+    message:
+      'CORS_ORIGINS must be a comma-separated list of exact origins such as ' +
+      'https://app.example.com, with no paths, spaces or wildcards',
+  })
+  CORS_ORIGINS?: string;
+}
+
+/**
+ * Where a production token may come from.
+ *
+ * Staging may trust its own demo issuer, so a public demo can hand out tokens
+ * for demo accounts. Production must never be configured that way, so this
+ * refuses to boot unless both the issuer and its keys belong to a Supabase
+ * project. It is what keeps the demo sign-in a staging-only thing: the code
+ * that mints demo tokens is not in this application at all, and this makes
+ * sure no production configuration can point the application at it.
+ */
+const SUPABASE_PROJECT = /^https:\/\/[a-z0-9]+\.supabase\.co(\/|$)/;
+
+function assertProductionIssuer(config: EnvironmentVariables): void {
+  if (config.NODE_ENV !== NodeEnv.Production) {
+    return;
+  }
+
+  for (const [name, value] of [
+    ['SUPABASE_URL', config.SUPABASE_URL],
+    ['SUPABASE_JWKS_URL', config.SUPABASE_JWKS_URL],
+  ] as const) {
+    if (!SUPABASE_PROJECT.test(value)) {
+      throw new Error(
+        `Invalid environment configuration:\n  - In production, ${name} must be a ` +
+          'Supabase project URL (https://<project>.supabase.co). Tokens from any other ' +
+          'issuer, including the staging demo sign-in, are never trusted in production.',
+      );
+    }
+  }
+}
+
+/** The allowed browser origins, parsed. Empty when none are configured. */
+export function corsOrigins(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
 }
 
 /**
@@ -184,6 +241,7 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
       REDIS_ALLOW_UNKNOWN_EVICTION_POLICY: optional(config.REDIS_ALLOW_UNKNOWN_EVICTION_POLICY),
       SUPABASE_URL: config.SUPABASE_URL,
       SUPABASE_JWKS_URL: config.SUPABASE_JWKS_URL,
+      CORS_ORIGINS: optional(config.CORS_ORIGINS),
     },
     { enableImplicitConversion: true },
   );
@@ -201,6 +259,8 @@ export function validateEnv(config: Record<string, unknown>): EnvironmentVariabl
 
     throw new Error(`Invalid environment configuration:\n${problems}`);
   }
+
+  assertProductionIssuer(validated);
 
   return validated;
 }

@@ -23,12 +23,15 @@ import {
   AttendanceCorrectionDto,
   AttendanceDto,
   AttendanceQueryDto,
+  AttendanceReportDto,
+  AttendanceReportQueryDto,
   CorrectAttendanceDto,
   MarkClassAttendanceDto,
   MarkEmployeeAttendanceDto,
   SelfCheckInDto,
 } from './attendance.dto';
 import { AttendanceType } from './attendance.enums';
+import type { AttendanceReport } from './report-attendance.action';
 import {
   ALREADY_MARKED_MESSAGE,
   AttendanceService,
@@ -222,6 +225,28 @@ export class AttendanceRecordsController {
   @ApiPageResponse(AttendanceDto, 'Attendance retrieved.')
   list(@Query() query: AttendanceQueryDto): Promise<Page<AttendanceDto>> {
     return this.attendance.list(filterOf(query), toPageRequest(query));
+  }
+
+  // Declared before ':id', so 'reports' is matched here rather than parsed as an id.
+  @Get('reports')
+  @RequiresPermission(Permission.AttendanceRead)
+  @ApiOperation({
+    summary: 'Attendance report for a period, grouped',
+    description:
+      'Counts per status, the total and the rate for each group with records in the period. ' +
+      `Computed over exactly the records GET /attendance returns to this caller: ${SCOPE_NOTE} ` +
+      'A class nobody took a register for has no row, rather than a row of zeros. ' +
+      'Whole-school reports are cached and refreshed after every attendance write; a narrowed ' +
+      'report is computed every time and never cached.',
+  })
+  @ApiErrorResponse(HttpStatus.BAD_REQUEST, 'The period, date or grouping failed validation.')
+  @ApiErrorResponse(
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    'The date is not a real calendar date, or no term or session covers it.',
+  )
+  @ApiItemResponse(AttendanceReportDto, 'Report retrieved.')
+  report(@Query() query: AttendanceReportQueryDto): Promise<AttendanceReport> {
+    return this.attendance.report(query);
   }
 
   @Get(':id')

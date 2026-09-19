@@ -69,6 +69,18 @@ export interface AccessScope<TEntity extends ObjectLiteral> {
 
   /** Applies the narrowing, if this actor needs any. */
   restrict(query: SelectQueryBuilder<TEntity>, alias: string, actor: Actor): void;
+
+  /**
+   * Whether `restrict` would narrow anything for this actor.
+   *
+   * False means the actor sees every row in their school, so any answer built
+   * from this scope is the same for everyone who holds that privilege. That is
+   * the only kind of answer that may be shared, for example cached: an answer
+   * narrowed to one caller is theirs alone. Asked of the scope rather than
+   * restated by the caller as "is an administrator", so a change to who is
+   * unrestricted changes what may be shared with nothing else to update.
+   */
+  narrows(actor: Actor): boolean;
 }
 
 /**
@@ -83,6 +95,7 @@ export function unrestrictedScope<TEntity extends ObjectLiteral>(): AccessScope<
   return {
     unrestricted: true,
     restrict: () => undefined,
+    narrows: () => false,
   };
 }
 
@@ -112,11 +125,13 @@ export function scopeFor<TEntity extends ObjectLiteral>(options: {
   readonly byRole: Readonly<Partial<Record<Role, FragmentBuilder>>>;
 }): AccessScope<TEntity> {
   const privileged = new Set<Role>(options.unrestrictedRoles);
+  const seesEverything = (actor: Actor) => [...actor.roles].some((role) => privileged.has(role));
 
   return {
     unrestricted: false,
+    narrows: (actor) => !seesEverything(actor),
     restrict(query, alias, actor) {
-      if ([...actor.roles].some((role) => privileged.has(role))) {
+      if (seesEverything(actor)) {
         return;
       }
 
