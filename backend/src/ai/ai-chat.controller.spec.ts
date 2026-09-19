@@ -32,11 +32,7 @@ describe('AI chat security boundary', () => {
     controller = new AiChatController({ chat } as unknown as AiService);
   });
 
-  async function invoke(context: {
-    tenantId?: string;
-    userId?: string;
-    role?: string;
-  }) {
+  async function invoke(context: { tenantId?: string; userId?: string; role?: string }) {
     return runWithRequestContext(
       {
         origin: 'http',
