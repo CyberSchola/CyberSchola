@@ -8,7 +8,7 @@ import { ListMembersAction, type MemberPage } from './list-members.action';
 export interface MemberSummary {
   id: string;
   userId: string;
-  role: string;
+  roles: string[];
   status: string;
 }
 
@@ -31,20 +31,38 @@ export class MembersService {
    * much of their own school and still nothing of anyone else's.
    */
   async list(limit: number, offset: number): Promise<MemberPageResult> {
-    const page: MemberPage = await this.transactions.runInUserAndTenantContext(
+    return this.transactions.runInUserAndTenantContext(
       requireUserId(),
       requireTenantId(),
-      async (manager) => new ListMembersAction(manager).execute(limit, offset),
-    );
+      async (manager) => {
+        const page: MemberPage = await new ListMembersAction(manager).execute(limit, offset);
 
-    return {
-      items: page.items.map((member) => ({
-        id: member.id,
-        userId: member.userId,
-        role: member.role,
-        status: member.status,
-      })),
-      total: page.total,
-    };
+        // One query for the whole page's roles rather than one per member. The ids
+        // come from the scoped page, and the view is security_invoker, so this can
+        // only ever return roles for rows the caller was already allowed to see.
+        const ids = page.items.map((member) => member.id);
+        const rows =
+          ids.length === 0
+            ? []
+            : await manager.query<Array<{ membership_id: string; roles: string[] }>>(
+                `SELECT membership_id, array_agg(role::text ORDER BY role) AS roles
+                   FROM membership_roles
+                  WHERE membership_id = ANY($1::uuid[])
+                  GROUP BY membership_id`,
+                [ids],
+              );
+        const rolesById = new Map(rows.map((row) => [row.membership_id, row.roles]));
+
+        return {
+          items: page.items.map((member) => ({
+            id: member.id,
+            userId: member.userId,
+            roles: rolesById.get(member.id) ?? [],
+            status: member.status,
+          })),
+          total: page.total,
+        };
+      },
+    );
   }
 }

@@ -79,7 +79,7 @@ export class TenantContextInterceptor implements NestInterceptor {
             origin: 'http',
             tenantId: resolved.tenantId,
             userId: resolved.userId,
-            role: resolved.role,
+            roles: resolved.roles,
             requestId,
           },
           () => next.handle(),

@@ -1,9 +1,20 @@
 import type { EntityManager } from 'typeorm';
 
 import { Role } from '../auth/permission.matrix';
-import { type AccessScope, scopeFor } from '../common/actions/access-scope';
+import {
+  type AccessScope,
+  type Actor,
+  type ScopeFragment,
+  scopeFor,
+} from '../common/actions/access-scope';
 import { TenantScopedAction } from '../common/actions/tenant-scoped.action';
 import { Membership } from './membership.entity';
+
+/** The caller's own membership row. */
+const ownMembership = (alias: string, actor: Actor): ScopeFragment => ({
+  sql: `${alias}.userId = :__membersScopeActorId`,
+  params: { __membersScopeActorId: actor.userId },
+});
 
 /** A page of members, and how many there are in total for this caller. */
 export interface MemberPage {
@@ -31,16 +42,19 @@ export class ListMembersAction extends TenantScopedAction<Membership> {
   /**
    * Narrows to the caller's own row for anyone who is not an administrator.
    *
-   * A plain predicate rather than an `EXISTS`, because the relationship being
-   * tested lives on this table: the row *is* the membership. An `EXISTS` is
-   * what the same pattern needs once the relationship is elsewhere, such as a
-   * teacher reaching a class through an assignment table, which is why the
-   * helper supports it.
+   * The same fragment for every non-administrator role, so a person holding two
+   * of them still sees exactly one row. A plain predicate rather than an
+   * `EXISTS`, because the relationship being tested lives on this table: the row
+   * *is* the membership.
    */
   protected readonly accessScope: AccessScope<Membership> = scopeFor<Membership>({
     unrestrictedRoles: [Role.SchoolAdmin],
-    narrow: (query, alias, actor) =>
-      void query.andWhere(`${alias}.userId = :__actorId`, { __actorId: actor.userId }),
+    byRole: {
+      [Role.Teacher]: ownMembership,
+      [Role.Student]: ownMembership,
+      [Role.Parent]: ownMembership,
+      [Role.Staff]: ownMembership,
+    },
   });
 
   /**

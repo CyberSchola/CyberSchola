@@ -1,0 +1,111 @@
+# CyberSchola staging stack: a public demo on one server.
+#
+#   nginx (on the host, TLS) -> api        127.0.0.1:3000
+#                            -> demo-auth  127.0.0.1:3100
+#   api -> postgres, redis    (private network, no published ports)
+#
+# Secrets come from ../../../../staging.env on the server (see deploy.sh), never
+# from this file. Postgres and Redis publish no ports at all: only the API and
+# the demo sign-in are reachable, and only from the host itself, where Nginx is.
+#
+# Not a production layout. Production runs against Supabase with the demo
+# sign-in absent, and refuses to boot if pointed at it.
+
+name: cyberschola-staging
+
+x-api: &api
+  image: cyberschola-api:staging
+  env_file: ${STAGING_ENV_FILE:-/opt/cyberschola/staging.env}
+  networks: [internal]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cyberschola
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in staging.env}
+      POSTGRES_DB: cyberschola
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cyberschola -d cyberschola']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # noeviction, which the API checks at boot. A cap keeps a runaway cache
+    # from taking the whole server down with it.
+    command: ['redis-server', '--maxmemory', '128mb', '--maxmemory-policy', 'noeviction', '--appendonly', 'no']
+    networks: [internal]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-off: apply migrations as the database owner.
+  migrate:
+    <<: *api
+    profiles: [tasks]
+    environment:
+      NODE_ENV: staging
+    command: ['node', 'node_modules/typeorm/cli.js', 'migration:run', '-d', 'dist/database/data-source.js']
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # One-off: rebuild the two demo schools. Also run nightly by cron.
+  seed:
+    <<: *api
+    profiles: [tasks]
+    environment:
+      NODE_ENV: staging
+    command: ['node', 'dist/database/seeds/demo-seed.js']
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: staging
+      PORT: '3000'
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  demo-auth:
+    image: node:22-alpine
+    restart: unless-stopped
+    user: node
+    working_dir: /srv
+    command: ['node', 'server.mjs']
+    environment:
+      DEMO_AUTH_ISSUER_BASE: ${DEMO_AUTH_ISSUER_BASE:?set in staging.env}
+      # The node user's home, so a fresh volume is created owned by that user.
+      DEMO_AUTH_KEY_FILE: /home/node/demo-auth-key.json
+      DEMO_AUTH_PORT: '3100'
+    volumes:
+      - ./demo-auth/server.mjs:/srv/server.mjs:ro
+      - demo-auth-data:/home/node
+    ports:
+      - '127.0.0.1:3100:3100'
+    networks: [internal]
+
+networks:
+  internal: {}
+
+volumes:
+  postgres-data: {}
+  demo-auth-data: {}

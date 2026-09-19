@@ -38,6 +38,12 @@ export function setupSwagger(
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
       'access-token',
     )
+    // Every route is authenticated unless it says otherwise, so the document
+    // says the same. Declaring the scheme alone is not enough: Swagger UI only
+    // sends the token on operations that list a security requirement, so
+    // without this, Authorize accepted a token and Try it out never sent it.
+    // `@Public()` clears the requirement on the routes that opt out.
+    .addSecurityRequirements('access-token')
     .build();
 
   const document = SwaggerModule.createDocument(app, config, {

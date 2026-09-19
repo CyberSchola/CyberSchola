@@ -89,7 +89,7 @@ describe('runWithRequestContext', () => {
           jobName: 'forged',
           tenantId: '11111111-2222-4333-8444-555555555555',
           userId: '22222222-3333-4444-8555-666666666666',
-          role: Role.SchoolAdmin,
+          roles: [Role.SchoolAdmin],
           requestId: 'r',
         },
         () => 'should not run',
@@ -104,7 +104,7 @@ describe('enterVerifiedJobContext', () => {
     tenantId: '11111111-2222-4333-8444-555555555555',
     userId: '22222222-3333-4444-8555-666666666666',
     membershipId: '33333333-4444-4555-8666-777777777777',
-    role: Role.Teacher,
+    roles: [Role.Teacher],
   };
 
   it('opens a job context that records what the job was', () => {
@@ -115,7 +115,7 @@ describe('enterVerifiedJobContext', () => {
       jobName: 'nightly-roster-export',
       tenantId: verified.tenantId,
       userId: verified.userId,
-      role: Role.Teacher,
+      roles: [Role.Teacher],
     });
   });
 
@@ -145,9 +145,16 @@ describe('enterVerifiedJobContext', () => {
     );
   });
 
-  it('refuses a role the matrix does not recognise, failing closed', () => {
+  it('refuses a role the matrix does not recognise, even beside a known one', () => {
     expect(() =>
-      enterVerifiedJobContext({ ...verified, role: 'SUPER_ADMIN' as Role }, () => 1),
-    ).toThrow(/unrecognised role/i);
+      enterVerifiedJobContext(
+        { ...verified, roles: [Role.Teacher, 'SUPER_ADMIN' as Role] },
+        () => 1,
+      ),
+    ).toThrow(/roles/i);
+  });
+
+  it('refuses a job with no roles', () => {
+    expect(() => enterVerifiedJobContext({ ...verified, roles: [] }, () => 1)).toThrow(/roles/i);
   });
 });

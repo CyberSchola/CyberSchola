@@ -15,7 +15,7 @@ export function resolveAiRequestContext(): AiRequestContext {
   return {
     tenantId,
     userId,
-    role: context?.role ?? '',
+    role: context?.roles?.[0] ?? '',
     requestId: context?.requestId ?? '',
   };
 }

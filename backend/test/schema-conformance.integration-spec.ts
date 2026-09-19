@@ -1,5 +1,12 @@
 import type { DataSource } from 'typeorm';
 
+import {
+  ATTENDANCE_CONTEXTS,
+  ATTENDANCE_STATUSES,
+  ATTENDANCE_TYPES,
+} from '../src/attendance/attendance.enums';
+import { ROLES, Role } from '../src/auth/permission.matrix';
+import { ROLE_TABLES } from '../src/people/role-tables';
 import { createTestDataSource, resetSchema } from './database.setup';
 
 interface TableRow {
@@ -153,18 +160,19 @@ describe('schema conformance', () => {
     let rootTables: string[];
 
     beforeAll(async () => {
+      // Single-column keys only. Once tables reference each other through
+      // composite keys that include tenant_id (see the next describe block), a
+      // looser query would call every referenced table a root. What makes a
+      // table a root is that tenant_id on its own points at it.
       const rows = await owner.query<TableRow[]>(`
-        SELECT DISTINCT ccu.table_name AS table_name
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu
-          ON kcu.constraint_name = tc.constraint_name
-         AND kcu.table_schema = tc.table_schema
-        JOIN information_schema.constraint_column_usage ccu
-          ON ccu.constraint_name = tc.constraint_name
-         AND ccu.table_schema = tc.table_schema
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-          AND tc.table_schema = 'public'
-          AND kcu.column_name = 'tenant_id'
+        SELECT DISTINCT con.confrelid::regclass::text AS table_name
+        FROM pg_constraint con
+        JOIN pg_attribute a
+          ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
+        WHERE con.contype = 'f'
+          AND con.connamespace = 'public'::regnamespace
+          AND array_length(con.conkey, 1) = 1
+          AND a.attname = 'tenant_id'
       `);
 
       rootTables = rows.map((row) => row.table_name);
@@ -174,6 +182,13 @@ describe('schema conformance', () => {
       // Naming tenants here would fix one table. Deriving the set is what makes
       // the next one impossible to miss.
       expect(rootTables).toContain('tenants');
+    });
+
+    it('does not mistake a table referenced by a composite key for a root', () => {
+      // classes is referenced as (tenant_id, class_id) by enrolments and
+      // assignments. That makes it a tenant-owned table in its own right, not a
+      // root, and the detection has to tell the two apart.
+      expect(rootTables).not.toContain('classes');
     });
 
     it('all have row-level security enabled and forced', async () => {
@@ -209,6 +224,53 @@ describe('schema conformance', () => {
       );
 
       expect(withoutPolicy.map((row) => row.table_name)).toEqual([]);
+    });
+  });
+
+  describe('references between tenant-owned tables', () => {
+    it('always carry the tenant in the foreign key', async () => {
+      // Added with the academic spine, which is the first place tenant-owned
+      // tables reference each other rather than only tenants itself.
+      //
+      // A foreign key check in Postgres runs with the table owner's privileges,
+      // so it does not respect row-level security. With a plain
+      // `class_id REFERENCES classes(id)`, a row acting in one school can point
+      // at a class belonging to another school that it cannot even see: WITH
+      // CHECK validates the new row's own tenant_id and nothing about its target.
+      // Including tenant_id in the key turns that into a foreign key violation.
+      // Verified by probe before the spine was written.
+      const unsafe = await owner.query<Array<{ reference: string }>>(`
+        SELECT con.conrelid::regclass::text || ' -> ' || con.confrelid::regclass::text AS reference
+        FROM pg_constraint con
+        WHERE con.contype = 'f'
+          AND con.connamespace = 'public'::regnamespace
+          AND con.confrelid <> 'tenants'::regclass
+          -- both sides are tenant-owned
+          AND EXISTS (SELECT 1 FROM pg_attribute a
+                       WHERE a.attrelid = con.conrelid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
+          AND EXISTS (SELECT 1 FROM pg_attribute a
+                       WHERE a.attrelid = con.confrelid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
+          -- and the key does not include tenant_id
+          AND NOT EXISTS (
+            SELECT 1 FROM unnest(con.conkey) k
+            JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k
+            WHERE a.attname = 'tenant_id'
+          )
+      `);
+
+      expect(unsafe.map((row) => row.reference)).toEqual([]);
+    });
+
+    it('finds references to check, so the assertion above is not vacuous', async () => {
+      const [row] = await owner.query<Array<{ count: string }>>(`
+        SELECT count(*)::text AS count
+        FROM pg_constraint con
+        WHERE con.contype = 'f'
+          AND con.connamespace = 'public'::regnamespace
+          AND con.confrelid <> 'tenants'::regclass
+      `);
+
+      expect(Number(row?.count)).toBeGreaterThan(0);
     });
   });
 
@@ -298,6 +360,218 @@ describe('schema conformance', () => {
       } finally {
         await owner.query('DROP TABLE IF EXISTS global_probe');
       }
+    });
+  });
+
+  describe('views', () => {
+    /**
+     * Added with BE-P01, the first view in the schema.
+     *
+     * A Postgres view runs with its owner's privileges unless it says otherwise.
+     * The owner is the migration role, which bypasses row-level security, so an
+     * ordinary view over tenant-owned tables returns every school's rows to the
+     * application while every policy on those tables stays intact and green.
+     * `security_invoker = true` makes the view run as the caller.
+     */
+    it('all run as the caller, so row-level security applies through them', async () => {
+      const unsafe = await owner.query<Array<{ view: string }>>(`
+        SELECT c.relname AS view
+          FROM pg_class c
+         WHERE c.relnamespace = 'public'::regnamespace
+           AND c.relkind = 'v'
+           AND NOT coalesce('security_invoker=true' = ANY (c.reloptions), false)
+      `);
+
+      expect(unsafe.map((row) => row.view)).toEqual([]);
+    });
+
+    it('exist, so the assertion above is not vacuous', async () => {
+      const [row] = await owner.query<Array<{ count: string }>>(`
+        SELECT count(*)::text AS count FROM pg_class
+         WHERE relnamespace = 'public'::regnamespace AND relkind = 'v'
+      `);
+
+      expect(Number(row?.count)).toBeGreaterThan(0);
+    });
+  });
+
+  describe('roles, the role tables and the membership_roles view', () => {
+    /**
+     * Three places name the roles and must agree: the Role enum and ROLE_TABLES in
+     * code, the Postgres enum, and the branches of membership_roles. A role added
+     * without its view branch would be silently stripped from everyone holding it,
+     * so the view is read from the catalog and compared, rather than trusted.
+     */
+    it('reads each role from exactly the table ROLE_TABLES names for it', async () => {
+      const rows = await owner.query<Array<{ table_name: string; role: string }>>(`
+        SELECT DISTINCT d.refobjid::regclass::text AS table_name, NULL::text AS role
+          FROM pg_depend d
+          JOIN pg_rewrite w ON w.oid = d.objid
+         WHERE w.ev_class = 'membership_roles'::regclass
+           AND d.refobjid <> 'membership_roles'::regclass
+           AND d.classid = 'pg_rewrite'::regclass
+           AND d.refclassid = 'pg_class'::regclass
+      `);
+
+      // Every role table, plus memberships: since migration 1757700400000 each branch
+      // reads through the membership and requires it to be live, so a removed
+      // membership holds no effective role even if a role row survived it.
+      const read = rows.map((row) => row.table_name);
+
+      expect(read.filter((table) => table !== 'memberships').sort()).toEqual(
+        Object.values(ROLE_TABLES).sort(),
+      );
+      expect(read).toContain('memberships');
+
+      // And each branch's literal matches its table. Probing each table with a
+      // row proves the pairing without parsing SQL: insert into one table, read
+      // back which role the view reports.
+      const [tenant] = await owner.query<Array<{ id: string }>>(
+        `INSERT INTO tenants (name, slug) VALUES ('Parity', 'parity-probe') RETURNING id`,
+      );
+
+      try {
+        for (const role of ROLES) {
+          const [membership] = await owner.query<Array<{ id: string }>>(
+            `INSERT INTO memberships (tenant_id, user_id) VALUES ($1, gen_random_uuid()) RETURNING id`,
+            [tenant.id],
+          );
+          const table = ROLE_TABLES[role];
+          await owner.query(
+            role === Role.SchoolAdmin
+              ? `INSERT INTO ${table} (tenant_id, membership_id) VALUES ($1, $2)`
+              : `INSERT INTO ${table} (tenant_id, membership_id, first_name, last_name) VALUES ($1, $2, 'P', 'P')`,
+            [tenant.id, membership.id],
+          );
+
+          const reported = await owner.query<Array<{ role: string }>>(
+            `SELECT role::text AS role FROM membership_roles WHERE membership_id = $1`,
+            [membership.id],
+          );
+
+          expect(reported.map((row) => row.role)).toEqual([role]);
+        }
+      } finally {
+        for (const table of Object.values(ROLE_TABLES)) {
+          await owner.query(`DELETE FROM ${table} WHERE tenant_id = $1`, [tenant.id]);
+        }
+        await owner.query(`DELETE FROM memberships WHERE tenant_id = $1`, [tenant.id]);
+        await owner.query(`DELETE FROM tenants WHERE id = $1`, [tenant.id]);
+      }
+    });
+
+    it('holds exactly the Role enum values in the database enum', async () => {
+      const rows = await owner.query<Array<{ value: string }>>(`
+        SELECT unnest(enum_range(NULL::memberships_role_enum))::text AS value
+      `);
+
+      expect(rows.map((row) => row.value).sort()).toEqual([...ROLES].sort());
+    });
+
+    it('refuses to grant a role to a membership that is not live and active, on every role table', async () => {
+      // The trigger is the database half of the membership lifecycle. A role table
+      // added later without it could hand a role to a suspended or removed member.
+      const rows = await owner.query<Array<{ table_name: string }>>(`
+        SELECT c.relname AS table_name
+          FROM pg_trigger t
+          JOIN pg_class c ON c.oid = t.tgrelid
+          JOIN pg_proc p ON p.oid = t.tgfoid
+         WHERE p.proname = 'role_requires_active_membership' AND NOT t.tgisinternal
+      `);
+
+      expect(rows.map((row) => row.table_name).sort()).toEqual(Object.values(ROLE_TABLES).sort());
+    });
+
+    it("ends a membership's roles when the membership is removed", async () => {
+      const rows = await owner.query<Array<{ tgname: string }>>(`
+        SELECT tgname FROM pg_trigger
+         WHERE tgrelid = 'memberships'::regclass AND NOT tgisinternal
+      `);
+
+      expect(rows.map((row) => row.tgname)).toContain('memberships_end_roles_on_removal');
+    });
+
+    it('gives every role table the tenant isolation every tenant-owned table has', () => {
+      for (const table of Object.values(ROLE_TABLES)) {
+        expect(tenantOwnedTables).toContain(table);
+      }
+    });
+  });
+  describe('attendance', () => {
+    /**
+     * Blueprint sections 91 and 96, as gates rather than as tests of today's
+     * behaviour. The behaviour has its own suite; these exist so that a future
+     * migration recreating the table, or adding a status on one side only,
+     * fails the build instead of quietly removing a guarantee.
+     */
+    it('holds exactly the AttendanceStatus enum values in the database enum', async () => {
+      const rows = await owner.query<Array<{ value: string }>>(`
+        SELECT unnest(enum_range(NULL::attendance_status_enum))::text AS value
+      `);
+
+      expect(rows.map((row) => row.value).sort()).toEqual([...ATTENDANCE_STATUSES].sort());
+    });
+
+    it('holds exactly the AttendanceType enum values in the database enum', async () => {
+      const rows = await owner.query<Array<{ value: string }>>(`
+        SELECT unnest(enum_range(NULL::attendance_type_enum))::text AS value
+      `);
+
+      expect(rows.map((row) => row.value).sort()).toEqual([...ATTENDANCE_TYPES].sort());
+    });
+
+    it('keeps every context the application knows about in the database type', async () => {
+      const rows = await owner.query<Array<{ value: string }>>(`
+        SELECT unnest(enum_range(NULL::attendance_context_enum))::text AS value
+      `);
+
+      expect(rows.map((row) => row.value).sort()).toEqual([...ATTENDANCE_CONTEXTS].sort());
+    });
+
+    it('still has the trigger that writes the correction trail', async () => {
+      const rows = await owner.query<Array<{ tgname: string }>>(`
+        SELECT tgname FROM pg_trigger
+         WHERE tgrelid = 'attendance'::regclass AND NOT tgisinternal
+      `);
+
+      expect(rows.map((row) => row.tgname)).toContain('record_attendance_correction_trigger');
+    });
+
+    it('still has the trigger that keeps a record inside its term', async () => {
+      const rows = await owner.query<Array<{ tgname: string }>>(`
+        SELECT tgname FROM pg_trigger
+         WHERE tgrelid = 'attendance'::regclass AND NOT tgisinternal
+      `);
+
+      expect(rows.map((row) => row.tgname)).toContain('attendance_within_term_trigger');
+    });
+
+    it('keeps the correction trail append only for the application role', async () => {
+      const [row] = await owner.query<
+        Array<{ insert: boolean; select: boolean; update: boolean; delete: boolean }>
+      >(`
+        SELECT has_table_privilege('cyberschola_app', 'attendance_corrections', 'INSERT') AS insert,
+               has_table_privilege('cyberschola_app', 'attendance_corrections', 'SELECT') AS select,
+               has_table_privilege('cyberschola_app', 'attendance_corrections', 'UPDATE') AS update,
+               has_table_privilege('cyberschola_app', 'attendance_corrections', 'DELETE') AS delete
+      `);
+
+      expect(row).toEqual({ insert: true, select: true, update: false, delete: false });
+    });
+
+    it('keeps one record per person per school day, per kind of person', async () => {
+      const rows = await owner.query<Array<{ indexname: string }>>(`
+        SELECT indexname FROM pg_indexes
+         WHERE tablename = 'attendance' AND indexdef LIKE '%UNIQUE%'
+      `);
+
+      expect(rows.map((row) => row.indexname).sort()).toEqual([
+        'attendance_one_per_staff_school_day',
+        'attendance_one_per_student_school_day',
+        'attendance_one_per_teacher_school_day',
+        'attendance_pkey',
+        'attendance_tenant_id_unique',
+      ]);
     });
   });
 });

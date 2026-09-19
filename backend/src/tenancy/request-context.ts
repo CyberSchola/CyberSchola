@@ -1,13 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 
-import { toRole, type Role } from '../auth/permission.matrix';
+import { toRoles, type Role } from '../auth/permission.matrix';
 
 /**
  * Everything security-relevant about the caller, resolved once per request.
  *
  * Blueprint rule 24: none of this is ever read from a request body or a query
- * string. `tenantId` and `role` come from a membership lookup against our own
+ * string. `tenantId` and `roles` come from a membership lookup against our own
  * tables, and the token supplies only an identity to look up.
  *
  * `tenantId` is optional, and that is not laxity. There is a real and narrow
@@ -31,8 +31,14 @@ export interface RequestContext {
   readonly tenantId?: string;
   /** Who is acting, from a verified token subject, or the actor a job runs as. */
   readonly userId?: string;
-  /** The caller's role in this school, from the membership row. */
-  readonly role?: string;
+  /**
+   * The caller's roles in this school, from the role rows on their membership.
+   *
+   * Several, not one: a teacher whose child attends the school holds TEACHER and
+   * PARENT. Empty is possible and grants nothing: a person can belong to a school
+   * before an administrator gives them any role there.
+   */
+  readonly roles?: readonly string[];
   /** Correlates log lines for one request. */
   readonly requestId: string;
   /** For a job context, what work it is. Absent on an HTTP request. */
@@ -121,8 +127,8 @@ export interface VerifiedJobActor {
   readonly userId: string;
   /** The live membership that proved the actor belongs to the school. */
   readonly membershipId: string;
-  /** The role read off that membership row. */
-  readonly role: Role;
+  /** The roles read from that membership's role rows. At least one. */
+  readonly roles: readonly Role[];
 }
 
 /**
@@ -133,8 +139,8 @@ export interface VerifiedJobActor {
  *
  * It still validates what it is given, so that a mistake inside the verified
  * path fails closed rather than producing a malformed context: a blank job
- * name, a non-uuid id, a missing membership id, or a role the matrix does not
- * recognise are all refused.
+ * name, a non-uuid id, a missing membership id, no roles, or a role the matrix
+ * does not recognise are all refused.
  *
  * ## Why jobs need a context at all
  *
@@ -177,10 +183,17 @@ export function enterVerifiedJobContext<T>(actor: VerifiedJobActor, work: () => 
     );
   }
 
-  if (toRole(actor.role) === undefined) {
-    // Fails closed on a role the matrix does not know, exactly as the request
-    // path does. A job must not be the way an unrecognised role gets in.
-    throw new Error(`Refusing to open a job context with the unrecognised role "${actor.role}".`);
+  const known = toRoles(actor.roles);
+
+  if (known.size === 0 || known.size !== new Set(actor.roles).size) {
+    // Fails closed on a role the matrix does not know, and on no roles at all. A
+    // job must not be the way an unrecognised role gets in, and a job acting as
+    // somebody with no role could only ever see nothing, which is a bug to
+    // surface rather than a job to run.
+    throw new Error(
+      `Refusing to open a job context with the roles [${actor.roles.join(', ')}]. ` +
+        'Jobs act as at least one known role, read from the database by runAsMember.',
+    );
   }
 
   return storage.run(
@@ -189,7 +202,7 @@ export function enterVerifiedJobContext<T>(actor: VerifiedJobActor, work: () => 
       jobName: actor.jobName,
       tenantId: actor.tenantId,
       userId: actor.userId,
-      role: actor.role,
+      roles: [...known],
       requestId: randomUUID(),
     },
     work,

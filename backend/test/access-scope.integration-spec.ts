@@ -4,6 +4,7 @@ import { Permission, ROLES, Role, roleHasPermission } from '../src/auth/permissi
 import { runWithRequestContext } from '../src/tenancy/request-context';
 import { ListMembersAction } from '../src/identity/list-members.action';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
+import { seedMember } from './people.fixtures';
 
 /**
  * The access scope, proven against real Postgres as the role that serves traffic.
@@ -62,14 +63,10 @@ describe('access scope', () => {
     `);
     [school, otherSchool] = rows.map((row) => row.id) as [string, string];
 
-    await owner.query(
-      `INSERT INTO memberships (tenant_id, user_id, role) VALUES
-         ($1, $2, 'SCHOOL_ADMIN'),
-         ($1, $3, 'TEACHER'),
-         ($1, $4, 'STUDENT'),
-         ($5, $6, 'SCHOOL_ADMIN')`,
-      [school, admin, teacher, student, otherSchool, outsider],
-    );
+    await seedMember(owner, school, admin, [Role.SchoolAdmin]);
+    await seedMember(owner, school, teacher, [Role.Teacher]);
+    await seedMember(owner, school, student, [Role.Student]);
+    await seedMember(owner, otherSchool, outsider, [Role.SchoolAdmin]);
   }, 120_000);
 
   afterAll(async () => {
@@ -80,13 +77,19 @@ describe('access scope', () => {
   /** Lists members exactly as a request would, with both session variables set. */
   async function listAs(
     userId: string,
-    role: Role,
+    role: Role | readonly Role[],
     tenantId: string = school,
     limit = 50,
     offset = 0,
   ) {
     return runWithRequestContext(
-      { origin: 'http', tenantId, userId, role, requestId: 'test' },
+      {
+        origin: 'http',
+        tenantId,
+        userId,
+        roles: typeof role === 'string' ? [role] : role,
+        requestId: 'test',
+      },
       () =>
         app.transaction(async (manager) => {
           await manager.query(`SELECT set_config('app.current_user', $1, true)`, [userId]);
@@ -144,6 +147,23 @@ describe('access scope', () => {
       expect(page.total).toBe(1);
     });
 
+    it('shows a person holding two non-administrator roles their own row once', async () => {
+      // Both roles carry the same "own membership" fragment. It must be applied
+      // once, not ORed with itself into a duplicate or a widened predicate.
+      const page = await listAs(teacher, [Role.Teacher, Role.Parent]);
+
+      expect(page.items.map((member) => member.userId)).toEqual([teacher]);
+      expect(page.total).toBe(1);
+    });
+
+    it('shows a member with no roles nothing, including themselves', async () => {
+      // No role contributes a fragment, so the scope is FALSE.
+      const page = await listAs(teacher, []);
+
+      expect(page.items).toEqual([]);
+      expect(page.total).toBe(0);
+    });
+
     it('does not let a teacher see the administrator', async () => {
       const page = await listAs(teacher, Role.Teacher);
 
@@ -190,11 +210,7 @@ describe('access scope', () => {
       // rows on its own. Asserted rather than assumed, because a silent change
       // in that behaviour would start listing people who were removed.
       const removed = '55555555-5555-4555-8555-555555555555';
-      await owner.query(
-        `INSERT INTO memberships (tenant_id, user_id, role, deleted_at)
-         VALUES ($1, $2, 'STAFF', now())`,
-        [school, removed],
-      );
+      await seedMember(owner, school, removed, [Role.Staff], { deleted: true });
 
       try {
         const page = await listAs(admin, Role.SchoolAdmin);
@@ -202,6 +218,10 @@ describe('access scope', () => {
         expect(page.items.map((member) => member.userId)).not.toContain(removed);
         expect(page.total).toBe(3);
       } finally {
+        await owner.query(
+          `DELETE FROM staff WHERE membership_id IN (SELECT id FROM memberships WHERE user_id = $1)`,
+          [removed],
+        );
         await owner.query(`DELETE FROM memberships WHERE user_id = $1`, [removed]);
       }
     });

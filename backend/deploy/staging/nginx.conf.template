@@ -1,0 +1,44 @@
+# Nginx site for the CyberSchola staging demo. deploy/staging/bootstrap-host.sh
+# fills in __DOMAIN__ and installs it; Certbot then adds the TLS server block
+# and the redirect from plain HTTP.
+#
+#   /              -> the demo sign-in page, which links to the docs
+#   /api/          -> the API, including the documentation at /api/docs
+#   /demo-auth/    -> the staging demo sign-in and its public keys
+#
+# Both upstreams listen on 127.0.0.1 only, so this is the one way in.
+
+limit_req_zone $binary_remote_addr zone=cyberschola_api:10m rate=20r/s;
+limit_req_zone $binary_remote_addr zone=cyberschola_demo_auth:10m rate=30r/m;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__;
+
+    client_max_body_size 1m;
+    server_tokens off;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+
+    location = / {
+        return 302 /demo-auth/;
+    }
+
+    location /api/ {
+        limit_req zone=cyberschola_api burst=40 nodelay;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+    }
+
+    location /demo-auth/ {
+        limit_req zone=cyberschola_demo_auth burst=20 nodelay;
+        proxy_pass http://127.0.0.1:3100;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}

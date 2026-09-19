@@ -1,5 +1,11 @@
+
 /**
- * Roles a membership can carry.
+ * Roles a person can hold in a school.
+ *
+ * A person may hold several at once: a teacher whose child attends the same
+ * school is a teacher and a parent on one membership. Each role is a row in its
+ * own table (see `ROLE_TABLES` in the people module), and `membership_roles`
+ * reads them back.
  *
  * Mirrors the `memberships_role_enum` type in migration 1757500000000. The two
  * are kept in step by a test that reads the database enum and compares, rather
@@ -43,6 +49,47 @@ export enum Permission {
   /** Send a message to the AI assistant. Granted to every role: AI-02 has no
    *  tool/data access yet, so this only gates reaching the model itself. */
   AiChat = 'ai.chat',
+  /** See the academic structure: sessions, terms, grade levels, classes, subjects. */
+  AcademicRead = 'academic.read',
+  /**
+   * Shape the academic structure and who is placed in it: create sessions,
+   * terms, classes and subjects, and assign teachers and enrol students.
+   * Blueprint section 12 puts all of this under the administrator.
+   */
+  AcademicManage = 'academic.manage',
+  /**
+   * See students. Which ones is the access scope's question: an administrator
+   * sees the whole school, a teacher sees only the students blueprint sections
+   * 13 and 14 allow, a parent sees their own children (section 17), and a
+   * student sees themselves (section 16).
+   */
+  StudentRead = 'student.read',
+  /**
+   * Create, update and remove the people of a school, link a login to a person's
+   * record, and manage which parents are linked to which children. Blueprint
+   * section 12 puts people management under the administrator.
+   */
+  PeopleManage = 'people.manage',
+  /**
+   * See attendance. Whose is the access scope's question: blueprint section 95
+   * gives an administrator the school, a teacher the students they supervise
+   * plus their own record, a parent their linked children, and a student and a
+   * staff member themselves.
+   */
+  AttendanceRead = 'attendance.read',
+  /**
+   * Record attendance. Section 95 again, and again the endpoint is not the whole
+   * rule: a teacher holding this may still only mark a class they supervise, and
+   * a staff member may only mark themselves. Those are checked per request.
+   */
+  AttendanceMark = 'attendance.mark',
+  /**
+   * Change a recorded status, which section 95 gives to the administrator alone
+   * along with approving corrections. A teacher who takes the wrong register
+   * asks an administrator, and section 96's trail records who actually changed
+   * it and why.
+   */
+  AttendanceCorrect = 'attendance.correct',
 }
 
 /**
@@ -73,11 +120,49 @@ const MATRIX: Readonly<Record<Role, readonly Permission[]>> = Object.freeze({
     Permission.SchoolRead,
     Permission.SchoolUpdate,
     Permission.AiChat,
+    Permission.AcademicRead,
+    Permission.AcademicManage,
+    Permission.StudentRead,
+    Permission.PeopleManage,
+    Permission.AttendanceRead,
+    Permission.AttendanceMark,
+    Permission.AttendanceCorrect,
   ],
-  [Role.Teacher]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
-  [Role.Student]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
-  [Role.Parent]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
-  [Role.Staff]: [Permission.MembershipRead, Permission.SchoolRead, Permission.AiChat],
+  [Role.Teacher]: [
+    Permission.MembershipRead,
+    Permission.SchoolRead,
+    Permission.AiChat,
+    Permission.AcademicRead,
+    Permission.StudentRead,
+    Permission.AttendanceRead,
+    Permission.AttendanceMark,
+  ],
+  [Role.Student]: [
+    Permission.MembershipRead,
+    Permission.SchoolRead,
+    Permission.AiChat,
+    Permission.AcademicRead,
+    Permission.StudentRead,
+    Permission.AttendanceRead,
+  ],
+  [Role.Parent]: [
+    Permission.MembershipRead,
+    Permission.SchoolRead,
+    Permission.AiChat,
+    Permission.AcademicRead,
+    Permission.StudentRead,
+    Permission.AttendanceRead,
+  ],
+  // Staff mark their own attendance where self check-in is enabled, and see
+  // their own. Section 18 and section 95.
+  [Role.Staff]: [
+    Permission.MembershipRead,
+    Permission.SchoolRead,
+    Permission.AiChat,
+    Permission.AcademicRead,
+    Permission.AttendanceRead,
+    Permission.AttendanceMark,
+  ],
 });
 
 /** Lookup sets, built once. The matrix above stays the readable declaration. */
@@ -97,14 +182,35 @@ export const PERMISSIONS: readonly Permission[] = Object.values(Permission);
 /**
  * Narrows a role string from the database to a known role, or undefined.
  *
- * Fails closed by construction. A value stored in `memberships.role` that this
- * enum does not know about, which is what a migration adding an enum value
- * without updating this file would produce, resolves to undefined and therefore
- * to no permissions at all. The alternative, treating an unrecognised role as
+ * Fails closed by construction. A value the database holds that this enum does
+ * not know about, which is what a migration adding an enum value without
+ * updating this file would produce, resolves to undefined and therefore to no
+ * permissions at all. The alternative, treating an unrecognised role as
  * ordinary, would grant it whatever the default happened to be.
  */
 export function toRole(value: string | undefined): Role | undefined {
   return ROLES.find((role) => role === value);
+}
+
+/**
+ * The known roles among a list read from the database.
+ *
+ * Unknown values are dropped rather than rejected, for the reason above: each
+ * one grants nothing. A person holding one known role and one unknown keeps what
+ * the known role allows and nothing more.
+ */
+export function toRoles(values: readonly string[] | undefined): ReadonlySet<Role> {
+  const known = new Set<Role>();
+
+  for (const value of values ?? []) {
+    const role = toRole(value);
+
+    if (role !== undefined) {
+      known.add(role);
+    }
+  }
+
+  return known;
 }
 
 /**
@@ -116,6 +222,20 @@ export function roleHasPermission(role: string | undefined, permission: Permissi
   const known = toRole(role);
 
   return known === undefined ? false : (PERMISSIONS_BY_ROLE.get(known)?.has(permission) ?? false);
+}
+
+/**
+ * Whether any of a person's roles holds a permission.
+ *
+ * The union, deliberately. A teacher who is also a parent may do what either role
+ * may do; what they may *see* is then narrowed by the access scope, which is
+ * also an OR across their roles. No roles at all holds nothing.
+ */
+export function rolesHavePermission(
+  roles: readonly string[] | undefined,
+  permission: Permission,
+): boolean {
+  return (roles ?? []).some((role) => roleHasPermission(role, permission));
 }
 
 /**

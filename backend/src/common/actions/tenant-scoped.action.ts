@@ -7,7 +7,7 @@ import type {
   SelectQueryBuilder,
 } from 'typeorm';
 
-import { toRole } from '../../auth/permission.matrix';
+import { toRoles } from '../../auth/permission.matrix';
 import type { TenantOwnedEntity } from '../entities/tenant-owned.entity';
 import { getRequestContext, requireTenantId, requireUserId } from '../../tenancy/request-context';
 import type { AccessScope, Actor } from './access-scope';
@@ -57,23 +57,23 @@ export abstract class TenantScopedAction<TEntity extends TenantOwnedEntity & Obj
   /**
    * Who is asking.
    *
-   * Both fields come from the membership row, resolved once per request. A role
-   * the enum does not recognise is refused rather than defaulted, so adding a
-   * value to the database enum without adding it here denies access instead of
-   * granting something arbitrary.
+   * The user from the verified token and the roles from the role rows on their
+   * membership, resolved once per request. A role the enum does not recognise is
+   * dropped rather than defaulted, so adding a value to the database enum without
+   * adding it here grants nothing instead of something arbitrary. No roles at all
+   * is a valid actor: every scope turns that into no rows.
    */
   protected get actor(): Actor {
-    const role = toRole(getRequestContext()?.role);
+    const context = getRequestContext();
 
-    if (role === undefined) {
+    if (context?.roles === undefined) {
       throw new Error(
-        'The request context carries no recognised role, so the rows this caller may see ' +
-          'cannot be determined. A role stored in memberships that is missing from the Role ' +
-          'enum will land here.',
+        'The request context carries no roles, so the rows this caller may see cannot be ' +
+          'determined. Tenant-scoped work has to run inside a resolved request or a job context.',
       );
     }
 
-    return { userId: requireUserId(), role };
+    return { userId: requireUserId(), roles: toRoles(context.roles) };
   }
 
   /**

@@ -9,7 +9,7 @@ import type { Observable } from 'rxjs';
 
 import { ForbiddenException, UnauthenticatedException } from '../common/exceptions/app.exception';
 import { getRequestContext } from '../tenancy/request-context';
-import { type Permission, roleHasPermission } from './permission.matrix';
+import { type Permission, rolesHavePermission } from './permission.matrix';
 import { NO_PERMISSION_KEY, REQUIRES_PERMISSION_KEY } from './requires-permission.decorator';
 import { PUBLIC_KEY } from './public.decorator';
 
@@ -20,13 +20,13 @@ import { PUBLIC_KEY } from './public.decorator';
  *
  * Authorization belongs in a guard, idiomatically, and this is not one. The
  * reason is ordering rather than preference: Nest runs every guard before every
- * interceptor, and the caller's role is resolved by `TenantContextInterceptor`.
- * A guard would therefore run before the role exists and would have to resolve
+ * interceptor, and the caller's roles are resolved by `TenantContextInterceptor`.
+ * A guard would therefore run before the roles exist and would have to resolve
  * membership a second time, which means a second database round trip per
  * request and two places that can disagree about who the caller is.
  *
  * Registered after `TenantContextInterceptor`, so the request context is open
- * and the role is already in it. A denial then happens inside that context,
+ * and the roles are already in it. A denial then happens inside that context,
  * which is what lets the audit line carry the tenant, the user and the request
  * id without deriving any of them again.
  *
@@ -60,7 +60,7 @@ export class PermissionInterceptor implements NestInterceptor {
     // authorization boundary for background work; it is the boundary for HTTP
     // routes. A job reaches tenant data only through
     // `JobContextService.runAsMember`, which reads the actor's membership of
-    // the named school and takes the role from that row, and
+    // the named school and takes the roles from its role rows, and
     // `TenantScopedAction` throws without a context. So a worker that
     // "bypassed the permission interceptor" has bypassed a check that never
     // applied to it, and still cannot read a row.
@@ -109,17 +109,21 @@ export class PermissionInterceptor implements NestInterceptor {
       );
     }
 
-    const role = getRequestContext()?.role;
+    const roles = getRequestContext()?.roles;
 
-    if (role === undefined) {
-      // Authenticated but with no role in context means no tenant was resolved,
+    if (roles === undefined) {
+      // Authenticated but with no roles in context means no tenant was resolved,
       // which is an authentication problem rather than an authorization one.
       // 401 rather than 403, for the same reason as everywhere else: we cannot
       // claim to know who they are and be refusing them.
       throw new UnauthenticatedException();
     }
 
-    if (!roleHasPermission(role, required)) {
+    if (!rolesHavePermission(roles, required)) {
+      // Granted when any of the caller's roles holds the permission. A member
+      // holding no role at all lands here too, which is correct: they belong to
+      // the school, so this is a refusal rather than an unknown caller.
+      //
       // 403, not 404. The 404 rule exists to stop enumeration across tenants,
       // and this caller is already inside the tenant: they know the resource
       // exists because they are a member of the school. Telling them the thing

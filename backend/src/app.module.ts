@@ -10,12 +10,16 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { TenantContextInterceptor } from './tenancy/tenant-context.interceptor';
 
 import { validateEnv } from './config/env.validation';
+import { AcademicsModule } from './academics/academics.module';
+import { AttendanceModule } from './attendance/attendance.module';
 import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { IdentityModule } from './identity/identity.module';
+import { PeopleModule } from './people/people.module';
 import { RedisModule } from './redis/redis.module';
 import { TenancyModule } from './tenancy/tenancy.module';
+import { TimetableModule } from './timetable/timetable.module';
 
 /**
  * Root module.
@@ -39,6 +43,10 @@ import { TenancyModule } from './tenancy/tenancy.module';
     AuthModule,
     TenancyModule,
     IdentityModule,
+    AcademicsModule,
+    PeopleModule,
+    AttendanceModule,
+    TimetableModule,
     HealthModule,
     AiModule,
   ],

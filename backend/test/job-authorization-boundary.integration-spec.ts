@@ -11,6 +11,7 @@ import { getRequestContext, runWithRequestContext } from '../src/tenancy/request
 import { JobContextService } from '../src/tenancy/job-context.service';
 import { TenantTransactionService } from '../src/tenancy/tenant-transaction.service';
 import { createTestDataSource, integrationDatabaseUrl, resetSchema } from './database.setup';
+import { seedMember } from './people.fixtures';
 
 /**
  * The authorization boundary for work that is not an HTTP request.
@@ -80,13 +81,9 @@ describe('the job authorization boundary', () => {
     `);
     [school, otherSchool] = rows.map((row) => row.id) as [string, string];
 
-    await owner.query(
-      `INSERT INTO memberships (tenant_id, user_id, role) VALUES
-         ($1, $2, 'SCHOOL_ADMIN'),
-         ($1, $3, 'TEACHER'),
-         ($4, $5, 'SCHOOL_ADMIN')`,
-      [school, admin, teacher, otherSchool, outsider],
-    );
+    await seedMember(owner, school, admin, [Role.SchoolAdmin]);
+    await seedMember(owner, school, teacher, [Role.Teacher]);
+    await seedMember(owner, otherSchool, outsider, [Role.SchoolAdmin]);
   }, 120_000);
 
   afterAll(async () => {
@@ -234,22 +231,22 @@ describe('the job authorization boundary', () => {
     });
 
     it('cannot claim a role, even one smuggled in past the type system', async () => {
-      // The signature has no role, so this needs a cast, which is exactly what
+      // The signature has no roles, so this needs a cast, which is exactly what
       // careless or hurried code does. The extra field is ignored: the context
-      // is built field by field from the membership row.
+      // is built field by field from the membership and its role rows.
       const smuggled = {
         jobName: 'teacher-digest',
         tenantId: school,
         userId: teacher,
-        role: Role.SchoolAdmin,
+        roles: [Role.SchoolAdmin],
       } as unknown as Parameters<JobContextService['runAsMember']>[0];
 
       const outcome = await jobs.runAsMember(smuggled, async (manager) => ({
-        role: getRequestContext()?.role,
+        roles: getRequestContext()?.roles,
         page: await new ListMembersAction(manager).execute(50, 0),
       }));
 
-      expect(outcome.role).toBe(Role.Teacher);
+      expect(outcome.roles).toEqual([Role.Teacher]);
       expect(outcome.page.items.map((member) => member.userId)).toEqual([teacher]);
     });
 
@@ -283,6 +280,17 @@ describe('the job authorization boundary', () => {
       }
     });
 
+    it('cannot act as a member who holds no role in the school', async () => {
+      const roleless = '66666666-6666-4666-8666-666666666666';
+      await seedMember(owner, school, roleless, []);
+
+      await expect(
+        jobs.runAsMember({ jobName: 'orphan-job', tenantId: school, userId: roleless }, () =>
+          Promise.resolve('should not run'),
+        ),
+      ).rejects.toThrow(/holds no role/i);
+    });
+
     it('cannot fabricate a job context through the HTTP opener', () => {
       // The other context opener refuses job contexts outright, so it is not a
       // way around runAsMember either.
@@ -293,7 +301,7 @@ describe('the job authorization boundary', () => {
             jobName: 'forged',
             tenantId: otherSchool,
             userId: admin,
-            role: Role.SchoolAdmin,
+            roles: [Role.SchoolAdmin],
             requestId: 'forged',
           },
           () => listMembers(otherSchool, admin),

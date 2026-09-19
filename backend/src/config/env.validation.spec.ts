@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { NodeEnv, validateEnv } from './env.validation';
+import { corsOrigins, NodeEnv, validateEnv } from './env.validation';
 
 /**
  * The minimum environment a process needs to boot.
@@ -19,7 +19,6 @@ const VALID = {
   REDIS_URL: 'redis://localhost:6379',
   SUPABASE_URL: 'https://project.supabase.co',
   SUPABASE_JWKS_URL: 'https://project.supabase.co/auth/v1/.well-known/jwks.json',
-  GROQ_API_KEY: 'gsk_test_key',
 } as const;
 
 const withEnv = (overrides: Record<string, unknown> = {}) => ({ ...VALID, ...overrides });
@@ -262,27 +261,65 @@ describe('validateEnv', () => {
       expect(validateEnv(withEnv()).SUPABASE_URL).toBe('https://project.supabase.co');
     });
   });
-
-  describe('GROQ_API_KEY', () => {
-    it('rejects a missing key', () => {
-      const incomplete = withEnv();
-      delete (incomplete as Record<string, unknown>).GROQ_API_KEY;
-
-      expect(() => validateEnv(incomplete)).toThrow(/GROQ_API_KEY/);
+  describe('CORS_ORIGINS', () => {
+    it('is absent by default, which enables no cross-origin access', () => {
+      expect(corsOrigins(validateEnv(withEnv()).CORS_ORIGINS)).toEqual([]);
     });
 
-    it('rejects an empty string', () => {
-      expect(() => validateEnv(withEnv({ GROQ_API_KEY: '' }))).toThrow(/GROQ_API_KEY/);
+    it('accepts exact origins, with or without a port', () => {
+      const value = 'https://app.example.com,http://localhost:3001';
+
+      expect(corsOrigins(validateEnv(withEnv({ CORS_ORIGINS: value })).CORS_ORIGINS)).toEqual([
+        'https://app.example.com',
+        'http://localhost:3001',
+      ]);
     });
 
-    it('rejects a whitespace-only value', () => {
-      // \S rather than .+ : a whitespace-only value would otherwise pass here
-      // and fail confusingly inside the Groq SDK instead of at boot.
-      expect(() => validateEnv(withEnv({ GROQ_API_KEY: '   ' }))).toThrow(/GROQ_API_KEY/);
+    it.each([
+      ['a wildcard', '*'],
+      ['a wildcard subdomain', 'https://*.example.com'],
+      ['a path', 'https://app.example.com/login'],
+      ['a trailing slash', 'https://app.example.com/'],
+      ['a space after the comma', 'https://a.example.com, https://b.example.com'],
+      ['no scheme', 'app.example.com'],
+    ])('refuses %s', (_label, value) => {
+      expect(() => validateEnv(withEnv({ CORS_ORIGINS: value }))).toThrow(/CORS_ORIGINS/);
+    });
+  });
+
+  describe('who production trusts to issue tokens', () => {
+    const DEMO_ISSUER = {
+      SUPABASE_URL: 'https://api-cyberschola.example.com/demo-auth',
+      SUPABASE_JWKS_URL: 'https://api-cyberschola.example.com/demo-auth/jwks.json',
+    };
+
+    it('lets staging trust its own demo issuer', () => {
+      expect(() => validateEnv(withEnv({ NODE_ENV: 'staging', ...DEMO_ISSUER }))).not.toThrow();
     });
 
-    it('accepts a real value', () => {
-      expect(validateEnv(withEnv({ GROQ_API_KEY: 'gsk_test' })).GROQ_API_KEY).toBe('gsk_test');
+    it('refuses to boot production with any issuer that is not a Supabase project', () => {
+      expect(() => validateEnv(withEnv({ NODE_ENV: 'production', ...DEMO_ISSUER }))).toThrow(
+        /In production, SUPABASE_URL must be a Supabase project URL/,
+      );
+    });
+
+    it('checks the keys as well as the issuer, so they cannot be split', () => {
+      expect(() =>
+        validateEnv(
+          withEnv({
+            NODE_ENV: 'production',
+            SUPABASE_JWKS_URL: DEMO_ISSUER.SUPABASE_JWKS_URL,
+          }),
+        ),
+      ).toThrow(/In production, SUPABASE_JWKS_URL must be a Supabase project URL/);
+    });
+
+    it('refuses a lookalike host that merely contains supabase.co', () => {
+      expect(() =>
+        validateEnv(
+          withEnv({ NODE_ENV: 'production', SUPABASE_URL: 'https://x.supabase.co.evil.example' }),
+        ),
+      ).toThrow(/SUPABASE_URL/);
     });
   });
 
