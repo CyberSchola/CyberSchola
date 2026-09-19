@@ -139,6 +139,21 @@ tr:last-child td { border-bottom: 0; }
 .skeleton { background: linear-gradient(90deg, #f0eff6 25%, #f7f6fb 37%, #f0eff6 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; border-radius: 8px; }
 @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 
+/* ------------------------------------------------------------------ score entry */
+.score-toolbar { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 16px; align-items: end; border-bottom: 1px solid var(--line); }
+.score-toolbar .field { margin: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; padding: 3px; background: #fbfbfd; }
+.seg-btn { border: 0; background: none; padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: 14px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.seg-btn span { font-weight: 500; font-size: 12px; }
+.seg-btn.on { background: var(--card); color: var(--brand); box-shadow: 0 1px 3px rgba(20, 16, 40, 0.12); }
+.score-table th.active-col { color: var(--brand); background: var(--brand-softer); }
+.score-table td.active-col { background: var(--brand-softer); }
+.score-input { width: 84px; text-align: right; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; font-variant-numeric: tabular-nums; background: #fff; }
+.score-input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.score-input.bad { border-color: var(--bad); background: var(--bad-soft); }
+.score-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 22px; border-top: 1px solid var(--line); }
+.warn-text { color: var(--bad); font-weight: 600; }
+
 /* ------------------------------------------------------------------ forms */
 .field { display: grid; gap: 6px; margin-bottom: 14px; }
 .field label { font-size: 13px; font-weight: 600; }
@@ -204,4 +219,6 @@ tr:last-child td { border-bottom: 0; }
   .content { padding: 18px 16px; }
   .grid.cols-2, .row { grid-template-columns: 1fr; }
   .bar-row { grid-template-columns: 110px 1fr 44px; }
+  .score-toolbar { grid-template-columns: 1fr; }
+  .score-input { width: 64px; }
 }

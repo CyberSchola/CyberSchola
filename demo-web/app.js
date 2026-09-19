@@ -150,6 +150,7 @@ function navItems() {
     ] });
     groups.push({ title: 'Academics', items: [
       { href: '#/results', label: 'Results', icon: 'chart' },
+      { href: '#/scores', label: 'Enter Scores', icon: 'book' },
       { href: '#/attendance', label: 'Attendance', icon: 'check' },
     ] });
     groups.push({ title: 'Intelligence', items: [{ href: '#/copilot/admin', label: 'AI Admin Copilot', icon: 'spark' }] });
@@ -158,6 +159,7 @@ function navItems() {
     groups.push({ title: 'Teaching', items: [
       { href: '#/students', label: 'My Students', icon: 'cap' },
       { href: '#/results', label: 'Results', icon: 'chart' },
+      { href: '#/scores', label: 'Enter Scores', icon: 'book' },
     ] });
     groups.push({ title: 'Intelligence', items: [{ href: '#/copilot/teacher', label: 'Teacher Copilot', icon: 'spark' }] });
   } else {
@@ -592,6 +594,148 @@ async function renderResults() {
   }
 }
 
+// ---------------------------------------------------------------- score entry
+
+const ASSESSMENTS = [
+  { key: 'CA1', field: 'ca1', label: 'CA1', max: 20 },
+  { key: 'CA2', field: 'ca2', label: 'CA2', max: 20 },
+  { key: 'EXAM', field: 'exam', label: 'Exam', max: 60 },
+];
+
+const scoreState = { options: [], optionId: null, termId: null, assessment: 'CA1', sheet: null };
+
+/**
+ * A subject teacher's score sheet. One assessment column is editable at a time;
+ * totals update as they type, and Save sends only the lines that changed. The
+ * API decides who may open which sheet, so the picker lists GET /results/sheets.
+ */
+async function renderScores() {
+  shell('Enter Scores', `
+    <div class="page-head"><div><h1>Enter scores</h1><p>CA1 /20 · CA2 /20 · Exam /60. New scores are added; changed ones are corrected.</p></div></div>
+    <div class="card"><div class="card-pad score-toolbar" id="picker"><div class="skeleton" style="height:44px"></div></div>
+      <div class="table-wrap" id="sheet"></div></div>`);
+  try {
+    scoreState.options = await api('/results/sheets');
+    if (!scoreState.options.length) {
+      document.getElementById('picker').innerHTML = '<div class="empty">You have no class subjects to score this session.</div>';
+      return;
+    }
+    const option = scoreState.options.find((o) => o.classSubjectId === scoreState.optionId) ?? scoreState.options[0];
+    scoreState.optionId = option.classSubjectId;
+    if (!option.terms.some((t) => t.id === scoreState.termId)) {
+      scoreState.termId = (option.terms.find((t) => t.name === 'Second Term') ?? option.terms[option.terms.length - 1])?.id ?? null;
+    }
+    drawPicker(option);
+    await loadSheet();
+  } catch (error) {
+    document.getElementById('picker').innerHTML = errorBox(error, true);
+    bindRetry(renderScores);
+  }
+}
+
+function drawPicker(option) {
+  const picker = document.getElementById('picker');
+  picker.innerHTML = `
+    <div class="field"><label for="sc-sheet">Subject and class</label><select id="sc-sheet">${scoreState.options.map((o) =>
+      `<option value="${esc(o.classSubjectId)}"${o.classSubjectId === scoreState.optionId ? ' selected' : ''}>${esc(o.subject)} · ${esc(o.class)}</option>`).join('')}</select></div>
+    <div class="field"><label for="sc-term">Term</label><select id="sc-term">${option.terms.map((t) =>
+      `<option value="${esc(t.id)}"${t.id === scoreState.termId ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Assessment</label><div class="seg" role="tablist">${ASSESSMENTS.map((a) =>
+      `<button type="button" role="tab" class="seg-btn${a.key === scoreState.assessment ? ' on' : ''}" data-assessment="${a.key}" aria-selected="${a.key === scoreState.assessment}">${a.label} <span>/${a.max}</span></button>`).join('')}</div></div>`;
+  picker.querySelector('#sc-sheet').onchange = (event) => { scoreState.optionId = event.target.value; scoreState.termId = null; renderScores(); };
+  picker.querySelector('#sc-term').onchange = (event) => { scoreState.termId = event.target.value; loadSheet(); };
+  picker.querySelectorAll('[data-assessment]').forEach((button) => {
+    button.onclick = () => { scoreState.assessment = button.dataset.assessment; drawPicker(option); drawSheet(); };
+  });
+}
+
+async function loadSheet() {
+  const target = document.getElementById('sheet');
+  target.innerHTML = '<div class="card-pad"><div class="skeleton" style="height:260px"></div></div>';
+  try {
+    scoreState.sheet = await api(`/results/sheet?classSubjectId=${encodeURIComponent(scoreState.optionId)}&termId=${encodeURIComponent(scoreState.termId)}`);
+    drawSheet();
+  } catch (error) {
+    target.innerHTML = errorBox(error, true);
+    bindRetry(loadSheet);
+  }
+}
+
+const round2 = (value) => Math.round(value * 100) / 100;
+
+function drawSheet() {
+  const sheet = scoreState.sheet;
+  if (!sheet) return;
+  const active = ASSESSMENTS.find((a) => a.key === scoreState.assessment);
+  const target = document.getElementById('sheet');
+
+  target.innerHTML = `
+    <table class="score-table"><thead><tr><th>Student</th>${ASSESSMENTS.map((a) =>
+      `<th class="num${a === active ? ' active-col' : ''}">${a.label} /${a.max}</th>`).join('')}<th class="num">Total /100</th></tr></thead>
+    <tbody>${sheet.pupils.map((pupil) => `<tr data-student="${esc(pupil.studentId)}">
+      <td><div class="name-cell"><div class="avatar">${esc(initials(pupil.name))}</div><strong>${esc(pupil.name)}</strong></div></td>
+      ${ASSESSMENTS.map((a) => a === active
+        ? `<td class="num active-col"><input class="score-input" type="number" inputmode="decimal" min="0" max="${a.max}" step="0.5" value="${pupil[a.field] ?? ''}" data-was="${pupil[a.field] ?? ''}" aria-label="${esc(pupil.name)} ${a.label}" placeholder="–"></td>`
+        : `<td class="num">${pupil[a.field] ?? '<span class="muted">–</span>'}</td>`).join('')}
+      <td class="num"><span class="badge total">${pupil.total}</span></td></tr>`).join('')}</tbody></table>
+    <div class="score-foot"><span class="muted small" id="sc-status"></span>
+      <button class="btn primary" id="sc-save" disabled>${icon('check', 16)} Save ${active.label}</button></div>`;
+
+  const inputs = [...target.querySelectorAll('.score-input')];
+  const status = target.querySelector('#sc-status');
+  const save = target.querySelector('#sc-save');
+
+  const refresh = () => {
+    let changed = 0;
+    let invalid = 0;
+    for (const input of inputs) {
+      const row = input.closest('tr');
+      const pupil = sheet.pupils.find((p) => p.studentId === row.dataset.student);
+      const raw = input.value.trim();
+      const value = raw === '' ? null : Number(raw);
+      const bad = raw !== '' && (!Number.isFinite(value) || value < 0 || value > active.max || round2(value) !== value);
+      const cleared = raw === '' && input.dataset.was !== '';
+      input.classList.toggle('bad', bad || cleared);
+      input.title = bad ? `Between 0 and ${active.max}, at most 2 decimals` : cleared ? 'A saved score cannot be cleared here' : '';
+      if (bad || cleared) invalid += 1;
+      else if (raw !== input.dataset.was) changed += 1;
+      const others = ASSESSMENTS.filter((a) => a !== active).reduce((sum, a) => sum + (pupil[a.field] ?? 0), 0);
+      const total = round2(others + (bad || value == null ? pupil[active.field] ?? 0 : value));
+      const badge = row.querySelector('.total');
+      badge.textContent = total;
+      badge.className = `badge total ${tone(total)}`;
+    }
+    save.disabled = changed === 0 || invalid > 0;
+    save.innerHTML = `${icon('check', 16)} Save ${active.label}${changed ? ` (${changed})` : ''}`;
+    status.textContent = invalid
+      ? `${invalid} score${invalid > 1 ? 's' : ''} to fix before saving`
+      : changed ? `${changed} unsaved change${changed > 1 ? 's' : ''}` : `${sheet.subject} · ${sheet.class} · ${sheet.term.name}`;
+    status.classList.toggle('warn-text', invalid > 0);
+  };
+  inputs.forEach((input) => { input.oninput = refresh; });
+  refresh();
+
+  save.onclick = async () => {
+    const entries = inputs
+      .filter((input) => input.value.trim() !== '' && input.value.trim() !== input.dataset.was)
+      .map((input) => ({ studentId: input.closest('tr').dataset.student, score: Number(input.value) }));
+    save.disabled = true;
+    try {
+      const saved = await api('/results/sheet', {
+        method: 'PUT',
+        body: { classSubjectId: sheet.classSubjectId, termId: sheet.term.id, assessmentType: active.key, entries },
+      });
+      scoreState.sheet = saved;
+      drawSheet();
+      const parts = [saved.inserted && `${saved.inserted} new`, saved.updated && `${saved.updated} corrected`].filter(Boolean);
+      toast(`${active.label} saved: ${parts.join(', ')}.`);
+    } catch (error) {
+      toast(error.message, true);
+      save.disabled = false;
+    }
+  };
+}
+
 async function renderAttendance() {
   shell('Attendance', `
     <div class="page-head"><div><h1>Attendance</h1><p>Second Term registers, 100 school days.</p></div></div>
@@ -800,6 +944,7 @@ async function route() {
     teachers: renderTeachers,
     results: renderResults,
     attendance: renderAttendance,
+    scores: renderScores,
     copilot: () => (sub === 'teacher' ? renderTeacherCopilot() : renderAdminCopilot()),
     soon: () => renderSoon(sub),
   };
