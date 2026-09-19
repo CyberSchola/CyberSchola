@@ -203,3 +203,12 @@ export class SavedScoresDto extends ScoreSheetDto {
   @ApiProperty({ example: 9, description: 'Pupils whose existing score was corrected.' })
   updated!: number;
 }
+
+/** A score sheet the caller may open: a class subject, and the terms of its session. */
+export class SheetOptionDto {
+  @ApiProperty({ format: 'uuid' }) classSubjectId!: string;
+  @ApiProperty({ example: 'Mathematics' }) subject!: string;
+  @ApiProperty({ example: 'SS2 A' }) class!: string;
+  @ApiProperty({ type: [NamedDto], description: "The session's terms, in order." })
+  terms!: NamedDto[];
+}

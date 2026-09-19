@@ -118,6 +118,48 @@ describe('entering scores', () => {
       )[0].n,
     );
 
+  describe('which sheets a caller may open', () => {
+    async function sheets(as: string, expected = 200) {
+      const response = await request(e2e.server())
+        .get('/api/v1/results/sheets')
+        .set({ authorization: await e2e.bearer(user(as)) })
+        .expect(expected);
+
+      return (
+        response.body as {
+          data: Array<{ subject: string; class: string; terms: Array<{ name: string }> }>;
+        }
+      ).data;
+    }
+
+    it('gives the Mathematics teacher their one class subject, with its terms', async () => {
+      const options = await sheets('mathsTeacher');
+
+      expect(options.map((o) => `${o.subject} ${o.class}`)).toEqual(['Mathematics SS2 A']);
+      expect(options[0].terms.map((t) => t.name)).toContain('Second Term');
+    });
+
+    it('gives an administrator every class subject in the current session', async () => {
+      const options = await sheets('admin');
+
+      expect(options.map((o) => o.subject)).toEqual([
+        'Biology',
+        'Chemistry',
+        'English Language',
+        'Mathematics',
+        'Physics',
+      ]);
+    });
+
+    it("gives another school's administrator none of this school's", async () => {
+      await expect(sheets('otherSchoolAdmin')).resolves.toEqual([]);
+    });
+
+    it('refuses a pupil', async () => {
+      await sheets('student', 403);
+    });
+  });
+
   describe('the sheet', () => {
     it("gives the Mathematics teacher every pupil in SS2 A with this term's scores", async () => {
       const { data } = await sheet('mathsTeacher');

@@ -26,6 +26,7 @@ import type {
   SavedScoresDto,
   SaveScoresDto,
   ScoreSheetDto,
+  SheetOptionDto,
   ScoreSheetQueryDto,
   StudentPerformanceDto,
   SubjectSummaryDto,
@@ -238,6 +239,18 @@ export class ResultsService {
       subjects,
       students,
     };
+  }
+
+  /** The score sheets this caller may open in the current session. */
+  sheets(): Promise<SheetOptionDto[]> {
+    return this.inSchool(async (manager) =>
+      (await new EnterScoresAction(manager).enterable()).map((option) => ({
+        classSubjectId: option.classSubjectId,
+        subject: option.subject,
+        class: option.className,
+        terms: option.terms,
+      })),
+    );
   }
 
   /** A class subject's score sheet for a term: every pupil who takes it, scored or not. */

@@ -3,7 +3,11 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Permission } from '../auth/permission.matrix';
 import { RequiresPermission } from '../auth/requires-permission.decorator';
-import { ApiErrorResponse, ApiItemResponse } from '../common/swagger/api-responses';
+import {
+  ApiErrorResponse,
+  ApiItemResponse,
+  ApiListResponse,
+} from '../common/swagger/api-responses';
 import {
   PerformanceDto,
   PerformanceQueryDto,
@@ -11,6 +15,7 @@ import {
   SaveScoresDto,
   ScoreSheetDto,
   ScoreSheetQueryDto,
+  SheetOptionDto,
 } from './results.dto';
 import { ResultsService } from './results.service';
 
@@ -38,6 +43,19 @@ export class ResultsController {
   @ApiErrorResponse(HttpStatus.UNPROCESSABLE_ENTITY, 'No current session, or no terms yet.')
   performance(@Query() query: PerformanceQueryDto): Promise<PerformanceDto> {
     return this.results.performance(query);
+  }
+
+  @Get('sheets')
+  @RequiresPermission(Permission.ResultEnter)
+  @ApiOperation({
+    summary: 'Score sheets I can open',
+    description:
+      'The class subjects this caller may enter scores for in the current session, each with ' +
+      "its session's terms: every one for an administrator, their own for a teacher.",
+  })
+  @ApiListResponse(SheetOptionDto, 'Score sheets retrieved.')
+  sheets(): Promise<SheetOptionDto[]> {
+    return this.results.sheets();
   }
 
   @Get('sheet')

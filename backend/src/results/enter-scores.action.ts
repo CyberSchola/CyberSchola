@@ -65,6 +65,69 @@ export class EnterScoresAction extends TenantScopedAction<Result> {
 
   protected readonly accessScope: AccessScope<Result> = unrestrictedScope<Result>();
 
+  /**
+   * The class subjects this caller may enter scores for in the current session,
+   * each with its session's terms: every one for an administrator, a teacher's
+   * own for a teacher. The same rule as `mayEnter`, as a list.
+   */
+  async enterable(): Promise<
+    Array<{
+      classSubjectId: string;
+      subject: string;
+      className: string;
+      terms: Array<{ id: string; name: string }>;
+    }>
+  > {
+    const actor = this.actor;
+    const admin = actor.roles.has(Role.SchoolAdmin);
+
+    if (!admin && !actor.roles.has(Role.Teacher)) {
+      return [];
+    }
+
+    const rows = await this.manager.query<
+      Array<{
+        id: string;
+        subject: string;
+        class_name: string;
+        terms: Array<{ id: string; name: string }>;
+      }>
+    >(
+      `SELECT cs.id, subject.name AS subject, grade.name || ' ' || klass.arm AS class_name,
+              COALESCE((SELECT json_agg(json_build_object('id', t.id, 'name', t.name)
+                                        ORDER BY t.starts_on)
+                          FROM terms t
+                         WHERE t.session_id = klass.session_id AND t.deleted_at IS NULL),
+                       '[]'::json) AS terms
+         FROM class_subjects cs
+         JOIN classes klass ON klass.id = cs.class_id AND klass.deleted_at IS NULL
+         JOIN academic_sessions session
+           ON session.id = klass.session_id AND session.is_current AND session.deleted_at IS NULL
+         JOIN grade_levels grade ON grade.id = klass.grade_level_id
+         JOIN subjects subject ON subject.id = cs.subject_id
+        WHERE cs.tenant_id = $1
+          AND cs.deleted_at IS NULL
+          AND ($2::boolean OR EXISTS (
+                SELECT 1
+                  FROM teachers teacher
+                  JOIN memberships membership
+                    ON membership.id = teacher.membership_id
+                   AND membership.deleted_at IS NULL
+                   AND membership.status = 'ACTIVE'
+                   AND membership.user_id = $3
+                 WHERE teacher.id = cs.teacher_id AND teacher.deleted_at IS NULL))
+        ORDER BY grade.name, klass.arm, subject.name`,
+      [this.tenantId, admin, actor.userId],
+    );
+
+    return rows.map((row) => ({
+      classSubjectId: row.id,
+      subject: row.subject,
+      className: row.class_name,
+      terms: row.terms,
+    }));
+  }
+
   /** A class subject of this school, or null. */
   async classSubject(classSubjectId: string): Promise<ClassSubjectRef | null> {
     const rows = await this.manager.query<
