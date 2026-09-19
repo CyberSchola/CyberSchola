@@ -527,12 +527,17 @@ async function studentModal(student) {
         await api(`/students/${student.id}`, { method: 'PATCH', body });
         toast('Changes saved.');
       } else {
-        const created = await api('/students', { method: 'POST', body });
-        const classes = await api('/classes?limit=1');
-        if (classes.items[0]) {
-          await api('/class-enrolments', { method: 'POST', body: { classId: classes.items[0].id, studentId: created.id } });
+        const name = `${body.firstName} ${body.lastName}`;
+        const outcome = await addAndEnrol(body);
+        if (outcome.stranded) {
+          // Created, not enrolled, and not removable: close the form so a retry
+          // cannot create the same student twice, and show the list as it is.
+          back.remove();
+          renderStudents();
+          toast(`${name} was added but could not be enrolled in ${DEMO_CLASS.label}. Enrol or remove them before trying again.`, true);
+          return;
         }
-        toast(`${body.firstName} ${body.lastName} added to SS2 A.`);
+        toast(`${name} added to ${DEMO_CLASS.label}.`);
       }
       back.remove();
       renderStudents();
@@ -542,6 +547,43 @@ async function studentModal(student) {
       submit.disabled = false;
     }
   };
+}
+
+/** The class the demo enrols new students in, found by name in the current session. */
+const DEMO_CLASS = { grade: 'SS2', arm: 'A', label: 'SS2 A' };
+
+async function demoClassId() {
+  const [sessions, classes, grades] = await Promise.all([
+    api('/academic-sessions?limit=100'),
+    api('/classes?limit=100'),
+    api('/grade-levels?limit=100'),
+  ]);
+  const current = sessions.items.find((session) => session.isCurrent);
+  const grade = grades.items.find((g) => g.name === DEMO_CLASS.grade);
+  const match = classes.items.find((c) => c.sessionId === current?.id && c.gradeLevelId === grade?.id && c.arm === DEMO_CLASS.arm);
+  if (!match) throw new Error(`${DEMO_CLASS.label} was not found in the current session, so no student was added.`);
+  return match.id;
+}
+
+/**
+ * Adds a student and enrols them in SS2 A, as one action from the user's side.
+ *
+ * The API exposes these as two requests, so this makes the pair all or nothing:
+ * the class is resolved before anything is written, and if the enrolment fails
+ * the new student is removed again, so a retry starts clean. Only if that
+ * removal also fails is the student left behind, and the caller is told so.
+ */
+async function addAndEnrol(body) {
+  const classId = await demoClassId();
+  const created = await api('/students', { method: 'POST', body });
+  try {
+    await api('/class-enrolments', { method: 'POST', body: { classId, studentId: created.id } });
+    return { stranded: false };
+  } catch (error) {
+    const removed = await api(`/students/${created.id}`, { method: 'DELETE' }).then(() => true, () => false);
+    if (!removed) return { stranded: true };
+    throw new Error(`Could not enrol in ${DEMO_CLASS.label}, so the student was not added. ${error.message}`);
+  }
 }
 
 // ---------------------------------------------------------------- teachers
